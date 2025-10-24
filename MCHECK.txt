@@ -1,0 +1,1006 @@
+'   $TITLE: 'MCHECK - Check Data and Write Record'
+'   Version 9.00
+'   Transformer Record Data Entry System
+'   K. W. Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Added code to properly handle all AEP Region Codes
+'============================================================================
+'   Define record type(s)
+'----------------------------------------------------------------------------
+	TYPE InfoRecord
+		Number AS INTEGER
+		Signature AS STRING * 20
+	END TYPE
+
+	TYPE DataRecord
+		Buff AS STRING * 1000
+	END TYPE
+   
+'   Repair data record type
+'   This looks at the repair list record as it is received from Enable
+   
+	TYPE RepairData
+		Serial AS STRING * 9
+		code AS STRING * 5
+		Area AS STRING * 1
+		Mfr AS STRING * 2
+		Ac AS STRING * 2
+	END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION AcCalc$ (Ratio$, Phase$, Alen%, Sign%)
+DECLARE FUNCTION AddSign$ (Work$, Alen%)
+DECLARE FUNCTION AllCheck% (x$, Check$)
+DECLARE FUNCTION CheckDate% (Value$)
+DECLARE FUNCTION CheckDivision% (V$)
+DECLARE FUNCTION CheckField% (Value$, Accept$)
+DECLARE SUB CheckRatio (Value$, ClrFlag%, LineNumber$)
+DECLARE FUNCTION CheckRegion% (V$)
+DECLARE SUB CheckRepairList (Value$(), Mfg%, Mbg%, Dfg%, Dbg%)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE SUB ErrMsg (Msg$, ClrFlag%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB MfrLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION OneDec% (Look$)
+DECLARE SUB PrtScrn (Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), Count%, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, Number%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB RetireLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION Round$ (Value$, Alen%)
+'============================================================================
+'   $INCLUDE: 'MDIMCOM.INC'
+	DIM Info AS InfoRecord, DataRec AS DataRecord
+'============================================================================
+	Programmer$ = "K.W.Kroninger"
+'   Version check
+	IF COMMAND$ <> "" AND LEFT$(UCASE$(LTRIM$(COMMAND$)), 1) = "V" THEN
+		PRINT "Metering Outfit/Dual Range CT Data Check Utility - Version 9.00"
+		END
+	END IF
+'============================================================================
+'   Turn on error handler
+'----------------------------------------------------------------------------
+	ON ERROR GOTO NetProblem
+'============================================================================
+'   Set a couple of flags
+   
+	ClrFlag% = 0    ' Screen has not been cleared
+
+'   Get the screen color right
+   
+	COLOR Mfg%, Mbg%
+
+'   Set up check strings
+   
+	All$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789- "
+	Num$ = "0123456789"
+	NumSp$ = "0123456789 "
+	Alpha$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	NumPer$ = "0123456789 ."
+'============================================================================
+'   Setups are done.  Do the checks.
+'----------------------------------------------------------------------------
+'   Check code.  Check for valid characters, all character positions filled,
+'   and code starting with correct letter.
+
+   
+	IF AllCheck%(Value$(1), Alpha$ + Num$) = 1 OR (INSTR("CM", LEFT$(Value$(1), 1)) = 0) THEN
+		ErrMsg "Error - Device Code", ClrFlag%
+	END IF
+
+'   Check activity code.  Format, then check for acceptable values.
+
+	Value$(2) = RIGHT$(STRING$(Alen%(2), "0") + LTRIM$(RTRIM$(Value$(2))), Alen%(2))
+	IF Value$(2) <> "01" AND Value$(2) <> "04" THEN
+		ErrMsg "Error - Activity Code", ClrFlag%
+	END IF
+
+'   Check Serial Number.  Remove leading zeros, make sure there's at least
+'   one character.
+   
+	Value$(3) = LTRIM$(RTRIM$(Value$(3)))
+
+	WHILE LEN(Value$(3)) > 1 AND LEFT$(Value$(3), 1) = "0"
+		Value$(3) = MID$(Value$(3), 2)
+	WEND
+   
+	Value$(3) = LEFT$(Value$(3) + SPACE$(Alen%(3)), Alen%(3))
+   
+	IF AllCheck%(Value$(3), All$) = 1 OR LTRIM$(RTRIM$(Value$(3))) = "" THEN
+		ErrMsg "Error - Serial Number", ClrFlag%
+	END IF
+
+'   Check Mfr against lookup table from MDS.
+   
+	MfrLookup Value$(4), Alen%(4), Flag%, " "
+
+	IF Flag% = 1 THEN
+		ErrMsg "Error - Manufacturer", ClrFlag%
+	END IF
+
+'   V.T.Ratio
+   
+	IF AllCheck%(Value$(7), NumSp$ + ":/") = 1 THEN
+		ErrMsg "Error - P.T. Ratio", ClrFlag%
+	END IF
+
+'   C.T. Ratios
+   
+	IF AllCheck%(Value$(8), NumSp$ + ":/") = 1 THEN
+		ErrMsg "Error - C.T. Ratios", ClrFlag%
+	END IF
+
+'   Check Rating Factor
+   
+	IF AllCheck%(Value$(10), NumPer$) = 1 THEN
+		ErrMsg "Error - Rating Factor", ClrFlag%
+	END IF
+
+'   Dielectric Check.  Just jam in a Y and be done with it.
+
+	Value$(12) = "Y"
+
+'   Check Region code against lookup table for compliance with MDS.
+
+	Value$(13) = LEFT$(UCASE$(Value$(13)) + SPACE$(Alen%(13)), Alen%(13))
+
+	IF CheckRegion%(Value$(13)) THEN
+		ErrMsg "Error - Region", ClrFlag%
+	END IF
+
+'   Check Maximum Burden
+   
+	IF CheckField%(Value$(14), All$ + ".") = 1 THEN
+		ErrMsg "Error - Maximum Burden", ClrFlag%
+	END IF
+
+'   Check Tester
+   
+	IF AllCheck%(Value$(15), Alpha$) = 1 THEN
+		ErrMsg "Error - Tester ID", ClrFlag%
+	END IF
+
+'   Check Retirement Reason Code
+   
+	Flag% = 0
+   
+	RetireLookup Value$(16), Alen%(16), Flag%, " "
+   
+	IF Flag% = 1 THEN
+		ErrMsg "Error - Retirement Reason Code", ClrFlag%
+	END IF
+
+'   Check Test Date
+   
+	IF CheckDate%(Value$(17)) = 1 THEN
+		ErrMsg "Error - Date Received", ClrFlag%
+	END IF
+
+'   Amps line A
+   
+	IF CheckField%(Value$(18), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line A", ClrFlag%
+	END IF
+
+'   Burden line A
+   
+	IF CheckField%(Value$(19), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line A", ClrFlag%
+	END IF
+
+'   Ratio line A
+   
+	IF CheckField%(Value$(20), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line A", ClrFlag%
+	END IF
+   
+	Value$(20) = Round$((Value$(20)), Alen%(20))
+
+	CheckRatio Value$(20), ClrFlag%, "Line A"
+
+'   Phase Error line A
+   
+	IF CheckField%(Value$(21), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line A", ClrFlag%
+	END IF
+   
+	Value$(21) = AddSign$(Round$((Value$(21)), Alen%(21)), Alen%(21))
+
+'   Accuracy Class line A - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(22) = SPACE$(Alen%(22)) THEN
+		IF Value$(20) <> SPACE$(Alen%(20)) THEN
+			IF Value$(21) <> SPACE$(Alen%(21)) THEN
+				Value$(22) = AcCalc$(Value$(20), Value$(21), Alen%(22), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(22), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line A", ClrFlag%
+	END IF
+   
+	Value$(22) = Round$((Value$(22)), Alen%(22))
+
+'   Amps line B
+   
+	IF CheckField%(Value$(23), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line B", ClrFlag%
+	END IF
+
+'   Burden line B
+   
+	IF CheckField%(Value$(24), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line B", ClrFlag%
+	END IF
+
+'   Ratio line B
+   
+	IF CheckField%(Value$(25), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line B", ClrFlag%
+	END IF
+   
+	Value$(25) = Round$((Value$(25)), Alen%(25))
+
+	CheckRatio Value$(25), ClrFlag%, "Line B"
+
+'   Phase Error line B
+   
+	IF CheckField%(Value$(26), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line B", ClrFlag%
+	END IF
+   
+	Value$(26) = AddSign$(Round$((Value$(26)), Alen%(26)), Alen%(26))
+
+'   Accuracy Class line B - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(27) = SPACE$(Alen%(27)) THEN
+		IF Value$(25) <> SPACE$(Alen%(25)) THEN
+			IF Value$(26) <> SPACE$(Alen%(26)) THEN
+				Value$(27) = AcCalc$(Value$(25), Value$(26), Alen%(27), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(27), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line B", ClrFlag%
+	END IF
+   
+	Value$(27) = Round$((Value$(27)), Alen%(27))
+
+'   Amps line C
+   
+	IF CheckField%(Value$(28), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line C", ClrFlag%
+	END IF
+
+'   Burden line C
+   
+	IF CheckField%(Value$(29), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line C", ClrFlag%
+	END IF
+
+'   Ratio line C
+   
+	IF CheckField%(Value$(30), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line C", ClrFlag%
+	END IF
+   
+	Value$(30) = Round$((Value$(30)), Alen%(30))
+
+	CheckRatio Value$(30), ClrFlag%, "Line C"
+
+'   Phase Error line C
+   
+	IF AllCheck%(Value$(31), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line C", ClrFlag%
+	END IF
+   
+	Value$(31) = AddSign$(Round$((Value$(31)), Alen%(31)), Alen%(31))
+
+'   Accuracy Class line C - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(32) = SPACE$(Alen%(32)) THEN
+		IF Value$(30) <> SPACE$(Alen%(30)) THEN
+			IF Value$(31) <> SPACE$(Alen%(31)) THEN
+				Value$(32) = AcCalc$(Value$(30), Value$(31), Alen%(32), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(32), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line C", ClrFlag%
+	END IF
+   
+	Value$(32) = Round$((Value$(32)), Alen%(32))
+
+'   Amps line D
+
+	IF CheckField%(Value$(33), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line D", ClrFlag%
+	END IF
+
+'   Burden line D
+
+	IF CheckField%(Value$(34), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line D", ClrFlag%
+	END IF
+
+'   Ratio line D
+   
+	IF CheckField%(Value$(35), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line D", ClrFlag%
+	END IF
+   
+	Value$(35) = Round$((Value$(35)), Alen%(35))
+
+	CheckRatio Value$(35), ClrFlag%, "Line D"
+
+'   Phase Error line D
+   
+	IF AllCheck%(Value$(36), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line D", ClrFlag%
+	END IF
+   
+	Value$(36) = AddSign$(Round$((Value$(36)), Alen%(36)), Alen%(36))
+
+'   Accuracy Class line D - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(37) = SPACE$(Alen%(37)) THEN
+		IF Value$(35) <> SPACE$(Alen%(35)) THEN
+			IF Value$(36) <> SPACE$(Alen%(36)) THEN
+				Value$(37) = AcCalc$(Value$(35), Value$(36), Alen%(37), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(37), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line D", ClrFlag%
+	END IF
+   
+	Value$(37) = Round$((Value$(37)), Alen%(37))
+
+'   Amps line E
+   
+	IF CheckField%(Value$(38), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line E", ClrFlag%
+	END IF
+
+'   Burden line E
+
+	IF CheckField%(Value$(39), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line E", ClrFlag%
+	END IF
+
+'   Ratio line E
+   
+	IF CheckField%(Value$(40), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line E", ClrFlag%
+	END IF
+   
+	Value$(40) = Round$((Value$(40)), Alen%(40))
+
+	CheckRatio Value$(40), ClrFlag%, "Line E"
+
+'   Phase Error line E
+   
+	IF AllCheck%(Value$(41), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error Line E", ClrFlag%
+	END IF
+   
+	Value$(41) = AddSign$(Round$((Value$(41)), Alen%(41)), Alen%(41))
+
+'   Accuracy Class line E - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(42) = SPACE$(Alen%(42)) THEN
+		IF Value$(40) <> SPACE$(Alen%(40)) THEN
+			IF Value$(41) <> SPACE$(Alen%(41)) THEN
+				Value$(42) = AcCalc$(Value$(40), Value$(41), Alen%(42), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(42), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line E", ClrFlag%
+	END IF
+   
+	Value$(42) = Round$((Value$(42)), Alen%(42))
+
+'   Amps line F
+
+	IF CheckField%(Value$(43), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps Line F", ClrFlag%
+	END IF
+
+'   Burden line F
+
+	IF CheckField%(Value$(44), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden Line F", ClrFlag%
+	END IF
+
+'   Ratio line F
+   
+	IF CheckField%(Value$(45), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line F", ClrFlag%
+	END IF
+   
+	Value$(45) = Round$((Value$(45)), Alen%(45))
+
+	CheckRatio Value$(45), ClrFlag%, "Line F"
+
+'   Phase Error line F
+   
+	IF AllCheck%(Value$(46), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line F", ClrFlag%
+	END IF
+   
+	Value$(46) = AddSign$(Round$((Value$(46)), Alen%(46)), Alen%(46))
+
+'   Accuracy Class line F - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(47) = SPACE$(Alen%(47)) THEN
+		IF Value$(45) <> SPACE$(Alen%(45)) THEN
+			IF Value$(45) <> SPACE$(Alen%(46)) THEN
+				Value$(47) = AcCalc$(Value$(45), Value$(46), Alen%(47), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(47), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line F", ClrFlag%
+	END IF
+   
+	Value$(47) = Round$((Value$(47)), Alen%(47))
+
+'   Amps line G
+
+	IF CheckField%(Value$(48), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line G", ClrFlag%
+	END IF
+
+'   Burden line G
+
+	IF CheckField%(Value$(49), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line G", ClrFlag%
+	END IF
+
+'   Ratio line G
+   
+	IF CheckField%(Value$(50), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line G", ClrFlag%
+	END IF
+   
+	Value$(50) = Round$((Value$(50)), Alen%(50))
+
+	CheckRatio Value$(50), ClrFlag%, "Line G"
+
+'   Phase Error line G
+   
+	IF AllCheck%(Value$(51), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line G", ClrFlag%
+	END IF
+   
+	Value$(51) = AddSign$(Round$((Value$(51)), Alen%(51)), Alen%(51))
+
+'   Accuracy Class line G - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(52) = SPACE$(Alen%(52)) THEN
+		IF Value$(50) <> SPACE$(Alen%(50)) THEN
+			IF Value$(51) <> SPACE$(Alen%(51)) THEN
+				Value$(52) = AcCalc$(Value$(50), Value$(51), Alen%(52), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(52), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line G", ClrFlag%
+	END IF
+   
+	Value$(52) = Round$((Value$(52)), Alen%(52))
+
+'   Amps line H
+
+	IF CheckField%(Value$(53), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line H", ClrFlag%
+	END IF
+
+'   Burden line H
+
+	IF CheckField%(Value$(54), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line H", ClrFlag%
+	END IF
+
+'   Ratio line H
+   
+	IF CheckField%(Value$(55), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line H", ClrFlag%
+	END IF
+   
+	Value$(55) = Round$((Value$(55)), Alen%(55))
+
+	CheckRatio Value$(55), ClrFlag%, "Line H"
+
+'   Phase Error line H
+   
+	IF AllCheck%(Value$(56), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line H", ClrFlag%
+	END IF
+   
+	Value$(56) = AddSign$(Round$((Value$(56)), Alen%(56)), Alen%(56))
+
+'   Accuracy Class line H - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(57) = SPACE$(Alen%(57)) THEN
+		IF Value$(55) <> SPACE$(Alen%(57)) THEN
+			IF Value$(56) <> SPACE$(Alen%(57)) THEN
+				Value$(57) = AcCalc$(Value$(55), Value$(56), Alen%(57), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(57), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line H", ClrFlag%
+	END IF
+   
+	Value$(57) = Round$((Value$(57)), Alen%(57))
+
+'   Amps line I
+
+	IF CheckField%(Value$(58), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line I", ClrFlag%
+	END IF
+
+'   Burden line I
+
+	IF CheckField%(Value$(59), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line I", ClrFlag%
+	END IF
+
+'   Ratio line I
+   
+	IF CheckField%(Value$(60), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line I", ClrFlag%
+	END IF
+   
+	Value$(60) = Round$((Value$(60)), Alen%(60))
+
+	CheckRatio Value$(60), ClrFlag%, "Line I"
+
+'   Phase Error line I
+   
+	IF AllCheck%(Value$(61), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line I", ClrFlag%
+	END IF
+   
+	Value$(61) = AddSign$(Round$((Value$(61)), Alen%(61)), Alen%(61))
+
+'   Accuracy Class line I - Calculate if necessary and possible and round to
+'   two decimal places.
+
+	IF Value$(62) = SPACE$(Alen%(62)) THEN
+		IF Value$(60) <> SPACE$(Alen%(60)) THEN
+			IF Value$(61) <> SPACE$(Alen%(61)) THEN
+				Value$(62) = AcCalc$(Value$(60), Value$(61), Alen%(62), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(62), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line I", ClrFlag%
+	END IF
+   
+	Value$(62) = Round$((Value$(62)), Alen%(62))
+
+'   Amps line J
+
+	IF CheckField%(Value$(63), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line J", ClrFlag%
+	END IF
+
+'   Burden line J
+
+	IF CheckField%(Value$(64), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line J", ClrFlag%
+	END IF
+
+'   Ratio line J
+   
+	IF CheckField%(Value$(65), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line J", ClrFlag%
+	END IF
+   
+	Value$(65) = Round$((Value$(65)), Alen%(65))
+
+	CheckRatio Value$(65), ClrFlag%, "Line J"
+
+'   Phase Error line J
+
+	IF AllCheck%(Value$(66), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line J", ClrFlag%
+	END IF
+   
+	Value$(66) = AddSign$(Round$((Value$(66)), Alen%(66)), Alen%(66))
+
+'   Accuracy Class line J - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(67) = SPACE$(Alen%(67)) THEN
+		IF Value$(65) <> SPACE$(Alen%(65)) THEN
+			IF Value$(66) <> SPACE$(Alen%(66)) THEN
+				Value$(67) = AcCalc$(Value$(65), Value$(66), Alen%(67), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(67), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line J", ClrFlag%
+	END IF
+   
+	Value$(67) = Round$((Value$(67)), Alen%(67))
+
+'   Amps line K
+
+	IF CheckField%(Value$(68), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line K", ClrFlag%
+	END IF
+
+'   Burden line K
+
+	IF CheckField%(Value$(69), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line K", ClrFlag%
+	END IF
+
+'   Ratio line K
+   
+	IF CheckField%(Value$(70), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line K", ClrFlag%
+	END IF
+   
+	Value$(70) = Round$((Value$(70)), Alen%(70))
+
+	CheckRatio Value$(70), ClrFlag%, "Line K"
+
+'   Phase Error line K
+   
+	IF AllCheck%(Value$(71), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line K", ClrFlag%
+	END IF
+   
+	Value$(71) = AddSign$(Round$((Value$(71)), Alen%(71)), Alen%(71))
+
+'   Accuracy Class line K - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(72) = SPACE$(Alen%(72)) THEN
+		IF Value$(70) <> SPACE$(Alen%(70)) THEN
+			IF Value$(71) <> SPACE$(Alen%(71)) THEN
+				Value$(72) = AcCalc$(Value$(70), Value$(71), Alen%(72), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(72), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line K", ClrFlag%
+	END IF
+   
+	Value$(72) = Round$((Value$(72)), Alen%(72))
+
+'   Amps line L
+
+	IF CheckField%(Value$(73), NumPer$) = 1 THEN
+		ErrMsg "Error - Amps line L", ClrFlag%
+	END IF
+
+'   Burden line L
+
+	IF CheckField%(Value$(74), All$ + ".") = 1 THEN
+		ErrMsg "Error - Burden line L", ClrFlag%
+	END IF
+
+'   Ratio line L
+   
+	IF CheckField%(Value$(75), NumPer$) = 1 THEN
+		ErrMsg "Error - Ratio line L", ClrFlag%
+	END IF
+   
+	Value$(75) = Round$((Value$(75)), Alen%(75))
+
+	CheckRatio Value$(75), ClrFlag%, "Line L"
+
+'   Phase Error line L
+   
+	IF AllCheck%(Value$(76), NumPer$ + "+-") = 1 THEN
+		ErrMsg "Error - Phase Error line L", ClrFlag%
+	END IF
+   
+	Value$(76) = AddSign$(Round$((Value$(76)), Alen%(76)), Alen%(76))
+
+'   Accuracy Class line L - Calculate if necessary and possible and round to
+'   two decimal places.
+   
+	IF Value$(77) = SPACE$(Alen%(77)) THEN
+		IF Value$(75) <> SPACE$(Alen%(75)) THEN
+			IF Value$(76) <> SPACE$(Alen%(76)) THEN
+				Value$(77) = AcCalc$(Value$(75), Value$(76), Alen%(77), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(77), NumPer$) = 1 THEN
+		ErrMsg "Error - Accuracy Class line L", ClrFlag%
+	END IF
+   
+	Value$(77) = Round$((Value$(77)), Alen%(77))
+
+'   Check damage and defect codes
+
+	FOR x% = 80 TO 85
+		IF Value$(x%) <> SPACE$(Alen%(x%)) THEN
+			Value$(x%) = RIGHT$("00" + LTRIM$(RTRIM$(Value$(x%))), Alen%(x%))
+			IF AllCheck%(Value$(x%), All$) = 1 THEN
+				IF x% < 83 THEN
+					ErrMsg "Error - Damage code", ClrFlag%
+				ELSE
+					ErrMsg "Error - Defect code", ClrFlag%
+				END IF
+			END IF
+		END IF
+	NEXT
+
+'   Check for same damage/defect code entered more then once
+
+	IF Value$(80) = "  " AND Value$(81) <> "  " THEN
+		SWAP Value$(80), Value$(81)
+	END IF
+   
+	IF Value$(81) = "  " AND Value$(82) <> "  " THEN
+		SWAP Value$(81), Value$(82)
+		IF Value$(80) = "  " AND Value$(81) <> "  " THEN
+			SWAP Value$(80), Value$(81)
+		END IF
+	END IF
+   
+	IF Value$(81) <> "  " AND Value$(80) = Value$(81) THEN
+		ErrMsg "Duplicate damage codes", ClrFlag%
+	END IF
+   
+	IF Value$(82) <> "  " AND (Value$(80) = Value$(82) OR Value$(81) = Value$(82)) THEN
+		ErrMsg "Duplicate damage codes", ClrFlag%
+	END IF
+	  
+	IF Value$(83) = "  " AND Value$(84) <> "  " THEN
+		SWAP Value$(83), Value$(84)
+	END IF
+   
+	IF Value$(84) = "  " AND Value$(85) <> "  " THEN
+		SWAP Value$(84), Value$(85)
+		IF Value$(83) = "  " AND Value$(84) <> "  " THEN
+			SWAP Value$(83), Value$(84)
+		END IF
+	END IF
+   
+	IF Value$(84) <> "  " AND Value$(83) = Value$(84) THEN
+		ErrMsg "Duplicate defect codes", ClrFlag%
+	END IF
+   
+	IF Value$(85) <> "  " AND (Value$(83) = Value$(85) OR Value$(84) = Value$(85)) THEN
+		ErrMsg "Duplicate defect codes", ClrFlag%
+	END IF
+
+'   Now check repair list
+
+	IF LTRIM$(RTRIM$(Value$(2))) = "" AND ClrFlag% = 0 THEN
+		CheckRepairList Value$(), Mfg%, Mbg%, Dfg%, Dbg%
+	END IF
+
+'============================================================================
+'   Done with checks. Write it?
+	IF ClrFlag% = 1 THEN
+		GOTO WaitForUser
+	END IF
+
+'   If it's check only, just return
+
+	IF Flag% = 1 THEN
+		CallPrg% = 2
+		CHAIN "Mdata"
+	END IF
+'============================================================================
+'   All checks passed.  Write it?
+
+'   Print screen
+
+	PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 85, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 85
+
+	COLOR Mfg%, Mbg%
+	x$ = Get1Key$("YN", "Data checks OK.  Write it? (Y/N)")
+	IF x$ = "N" THEN
+		CallPrg% = 2
+		CHAIN "MDATA"
+	END IF
+'============================================================================
+'   Put the data into the buffer, and write the record
+'============================================================================
+'   Establish string
+
+	Buffer$ = SPACE$(1000)
+'============================================================================
+'   ID record type
+'   Record types are as follows:
+'       1=Current Transformer
+'       3=Voltage Transformer
+'       6=Phase Shift Transformer
+'       7=Metering Outfit
+
+	MID$(Buffer$, 1, 1) = "7"
+'============================================================================
+'   Put the data in the buffer
+'----------------------------------------------------------------------------
+	MID$(Buffer$, 2, Alen%(1)) = Value$(1)          '   Device Code
+	MID$(Buffer$, 991, Alen%(2)) = Value$(2)        '   Activity Code
+	MID$(Buffer$, 485, Alen%(3)) = Value$(3)        '   MFG Serial Number
+	MID$(Buffer$, 36, Alen%(4)) = Value$(4)         '   Mfg
+	MID$(Buffer$, 41, Alen%(5)) = Value$(5)         '   Type
+	MID$(Buffer$, 513, Alen%(6)) = Value$(6)        '   Volts
+	MID$(Buffer$, 49, Alen%(7)) = Value$(7)         '   P. T. Ratio
+	MID$(Buffer$, 58, Alen%(8)) = Value$(8)         '   C. T. Ratios
+	MID$(Buffer$, 77, Alen%(10)) = Value$(10)       '   Rating Factor
+	MID$(Buffer$, 93, Alen%(12)) = Value$(12)       '   Dielectric Check
+	MID$(Buffer$, 901, Alen%(13)) = Value$(13)      '   Division
+	MID$(Buffer$, 98, Alen%(14)) = Value$(14)       '   Maximum Burden
+	MID$(Buffer$, 101, Alen%(15)) = Value$(15)      '   Tester
+	MID$(Buffer$, 511, Alen%(16)) = Value$(16)      '   Retirement Reason
+	MID$(Buffer$, 105, Alen%(17)) = Value$(17)      '   Test Date
+	MID$(Buffer$, 113, Alen%(18)) = Value$(18)      '   Amps line A
+	MID$(Buffer$, 118, Alen%(19)) = Value$(19)      '   Burden line A
+	MID$(Buffer$, 121, Alen%(20)) = Value$(20)      '   Ratio line A
+	MID$(Buffer$, 127, Alen%(21)) = Value$(21)      '   Phase Error line A
+	MID$(Buffer$, 133, Alen%(22)) = Value$(22)      '   Accuracy Class line A
+	MID$(Buffer$, 139, Alen%(23)) = Value$(23)      '   Amps line B
+	MID$(Buffer$, 144, Alen%(24)) = Value$(24)      '   Burden line B
+	MID$(Buffer$, 147, Alen%(25)) = Value$(25)      '   Ratio line B
+	MID$(Buffer$, 153, Alen%(26)) = Value$(26)      '   Phase Error line B
+	MID$(Buffer$, 159, Alen%(27)) = Value$(27)      '   Accuracy Class line B
+	MID$(Buffer$, 165, Alen%(28)) = Value$(28)      '   Amps line C
+	MID$(Buffer$, 170, Alen%(29)) = Value$(29)      '   Burden line C
+	MID$(Buffer$, 173, Alen%(30)) = Value$(30)      '   Ratio line C
+	MID$(Buffer$, 179, Alen%(31)) = Value$(31)      '   Phase Error line C
+	MID$(Buffer$, 185, Alen%(32)) = Value$(32)      '   Accuracy Class line C
+	MID$(Buffer$, 191, Alen%(33)) = Value$(33)      '   Amps line D
+	MID$(Buffer$, 196, Alen%(34)) = Value$(34)      '   Burden line D
+	MID$(Buffer$, 199, Alen%(35)) = Value$(35)      '   Ratio line D
+	MID$(Buffer$, 205, Alen%(36)) = Value$(36)      '   Phase Error line D
+	MID$(Buffer$, 211, Alen%(37)) = Value$(37)      '   Accuracy Class line D
+	MID$(Buffer$, 217, Alen%(38)) = Value$(38)      '   Amps line E
+	MID$(Buffer$, 222, Alen%(39)) = Value$(39)      '   Burden line E
+	MID$(Buffer$, 225, Alen%(40)) = Value$(40)      '   Ratio line E
+	MID$(Buffer$, 231, Alen%(41)) = Value$(41)      '   Phase Error line E
+	MID$(Buffer$, 237, Alen%(42)) = Value$(42)      '   Accuracy Class line E
+	MID$(Buffer$, 243, Alen%(43)) = Value$(43)      '   Amps line F
+	MID$(Buffer$, 248, Alen%(44)) = Value$(44)      '   Burden line F
+	MID$(Buffer$, 251, Alen%(45)) = Value$(45)      '   Ratio line F
+	MID$(Buffer$, 257, Alen%(46)) = Value$(46)      '   Phase Error line F
+	MID$(Buffer$, 263, Alen%(47)) = Value$(47)      '   Accuracy Class line F
+	MID$(Buffer$, 269, Alen%(48)) = Value$(48)      '   Amps line G
+	MID$(Buffer$, 274, Alen%(49)) = Value$(49)      '   Burden line G
+	MID$(Buffer$, 277, Alen%(50)) = Value$(50)      '   Ratio line G
+	MID$(Buffer$, 283, Alen%(51)) = Value$(51)      '   Phase Error line G
+	MID$(Buffer$, 289, Alen%(52)) = Value$(52)      '   Accuracy Class line G
+	MID$(Buffer$, 295, Alen%(53)) = Value$(53)      '   Amps line H
+	MID$(Buffer$, 300, Alen%(54)) = Value$(54)      '   Burden line H
+	MID$(Buffer$, 303, Alen%(55)) = Value$(55)      '   Ratio line H
+	MID$(Buffer$, 309, Alen%(56)) = Value$(56)      '   Phase Error line H
+	MID$(Buffer$, 315, Alen%(57)) = Value$(57)      '   Accuracy Class line H
+	MID$(Buffer$, 321, Alen%(58)) = Value$(58)      '   Amps line I
+	MID$(Buffer$, 326, Alen%(59)) = Value$(59)      '   Burden line I
+	MID$(Buffer$, 329, Alen%(60)) = Value$(60)      '   Ratio line I
+	MID$(Buffer$, 335, Alen%(61)) = Value$(61)      '   Phase Error line I
+	MID$(Buffer$, 341, Alen%(62)) = Value$(62)      '   Accuracy Class line I
+	MID$(Buffer$, 347, Alen%(63)) = Value$(63)      '   Amps line J
+	MID$(Buffer$, 352, Alen%(64)) = Value$(64)      '   Burden line J
+	MID$(Buffer$, 355, Alen%(65)) = Value$(65)      '   Ratio line J
+	MID$(Buffer$, 361, Alen%(66)) = Value$(66)      '   Phase Error line J
+	MID$(Buffer$, 367, Alen%(67)) = Value$(67)      '   Accuracy Class line J
+	MID$(Buffer$, 373, Alen%(68)) = Value$(68)      '   Amps line K
+	MID$(Buffer$, 378, Alen%(69)) = Value$(69)      '   Burden line K
+	MID$(Buffer$, 381, Alen%(70)) = Value$(70)      '   Ratio line K
+	MID$(Buffer$, 387, Alen%(71)) = Value$(71)      '   Phase Error line K
+	MID$(Buffer$, 393, Alen%(72)) = Value$(72)      '   Accuracy Class line K
+	MID$(Buffer$, 399, Alen%(73)) = Value$(73)      '   Amps line L
+	MID$(Buffer$, 404, Alen%(74)) = Value$(74)      '   Burden line L
+	MID$(Buffer$, 407, Alen%(75)) = Value$(75)      '   Ratio line L
+	MID$(Buffer$, 413, Alen%(76)) = Value$(76)      '   Phase Error line L
+	MID$(Buffer$, 419, Alen%(77)) = Value$(77)      '   Accuracy Class line L
+	MID$(Buffer$, 425, Alen%(78)) = Value$(78)      '   Remarks
+	MID$(Buffer$, 475, Alen%(79)) = Value$(79)      '   Price
+	MID$(Buffer$, 601, Alen%(80)) = Value$(80)      '   Damage code 1
+	MID$(Buffer$, 603, Alen%(81)) = Value$(81)      '   Damage code 2
+	MID$(Buffer$, 605, Alen%(82)) = Value$(82)      '   Damage code 3
+	MID$(Buffer$, 607, Alen%(83)) = Value$(83)      '   Defect code 1
+	MID$(Buffer$, 609, Alen%(84)) = Value$(84)      '   Defect code 2
+	MID$(Buffer$, 611, Alen%(85)) = Value$(85)      '   Defect code 3
+	MID$(Buffer$, 993, 8) = TIME$                   '   Time Stamp
+'============================================================================
+'   Write the record to the disk
+
+	OPEN FileName$ FOR RANDOM AS #1 LEN = 1000
+	GET #1, 1, Info
+	RecNum% = Info.Number
+
+	DataRec.Buff = Buffer$
+
+'   If we're editing a record, put it back in place.  If it's a new
+'   record, append it to the file.
+
+	IF EdRec% > 0 THEN
+		RecNum% = EdRec%
+	ELSE
+		RecNum% = RecNum% + 1
+	END IF
+   
+	PUT #1, RecNum% + 1, DataRec
+   
+	IF EdRec% = 0 THEN
+		Info.Number = RecNum%
+		Info.Signature = "TRDES"
+		PUT #1, 1, Info
+	END IF
+   
+	CLOSE #1
+
+'   And exit to the data input
+
+	IF EdRec% > 0 THEN
+		CallPrg% = 1
+	ELSE
+		CallPrg% = 4
+	END IF
+	CHAIN "MDATA"
+'============================================================================
+'   It's bad.
+
+WaitForUser:
+	x$ = Get1Key$(CHR$(13), "Press ENTER to return to edit screen")
+
+Split:
+	CallPrg% = 2
+	CHAIN "MDATA"
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+   
+	ELSE
+	  
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+
+	END IF
+	IF Junk$ = CHR$(27) THEN
+		RESUME Split
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of Mcheck main module
+'****************************************************************************
+

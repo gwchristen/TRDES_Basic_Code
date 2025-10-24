@@ -1,0 +1,450 @@
+'   $TITLE: 'RTMENU - Reactiformer Menu'
+'   Version 9.00
+'============================================================================
+'   Transformer Record Data Entry System
+'   K. W. Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Added code to properly handle all AEP Region Codes
+'============================================================================
+'   Define record types
+'----------------------------------------------------------------------------
+'   Data access
+'----------------------------------------------------------------------------
+	TYPE InfoRecord
+		Number AS INTEGER
+	END TYPE
+ 
+	TYPE DataRecord
+		Buffer AS STRING * 1000
+	END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DayOfWeek$ (Today$)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, LengTh%)
+DECLARE SUB EditIniFile (FileName$, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%)
+DECLARE SUB GenerateRecords (FileName$, Location%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION Heading% ()
+DECLARE SUB Parse ()
+DECLARE FUNCTION PrintLine% (LineCount%, Ptr%, Value$())
+DECLARE FUNCTION PrintMenu$ ()
+DECLARE FUNCTION PrintScreen$ ()
+DECLARE SUB PrtScrn (Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), Count%, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, Number%)
+DECLARE SUB Puts (Message$, Row%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadIniFile (FileName$, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%)
+'============================================================================
+'   $INCLUDE: 'RTDIMCOM.INC'
+	DIM SHARED Info AS InfoRecord, Buffer AS DataRecord, Version$
+'============================================================================
+	Programmer$ = "K.W.Kroninger"
+
+'   Version check
+	Version$ = "Version 9.00"
+   
+	IF COMMAND$ <> "" AND LEFT$(UCASE$(LTRIM$(COMMAND$)), 1) = "V" THEN
+		PRINT "Reactiformer Menu - "; Version$
+		END
+	END IF
+'============================================================================
+'   Read the .ini file
+'----------------------------------------------------------------------------
+	ReadIniFile "Rt.Ini", Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%
+'============================================================================
+	ON ERROR GOTO BadDrive
+
+OpenIt:
+	Df% = FREEFILE
+	OPEN FileName$ FOR RANDOM AS #Df% LEN = LEN(Buffer)
+	GET #Df%, 1, Info
+	CLOSE
+
+'   Read the screen prompt variables
+
+	FOR x% = 1 TO 19
+		READ Prompt$(x%)
+	NEXT
+
+'   Now read location and length variables
+
+	FOR x% = 1 TO 24
+		READ Prow%(x%), Pcol%(x%), Arow%(x%), Acol%(x%), Alen%(x%), Fwd%(x%), Bwd%(x%)
+	NEXT
+
+
+'   Prompt string data
+
+	DATA "CODE:","ACTIVITY CODE:","S/N:","MFR:","TYPE:"
+	DATA "VOLTS:","DATE REC'D:","P/O#"
+	DATA "DIELECTRIC:","REGION:","TESTER:","RETIRED:"
+	DATA "REM:"
+  
+'   Some misc screen ID strings
+  
+	DATA "REACTIFORMERS"
+	DATA "DATE:","PRICE:","ACCEPTABLE (Y/N):"
+	DATA "DAMAGE CODES","DEFECT CODES"
+
+'   Location and length data
+
+'        Prow  Pcol  Arow  Acol  Alen  Fwd  Bwd
+	DATA   3,   12,    3,   17,    5,    3,  24  : '  1 Device Code
+	DATA   5,    9,    5,   23,    2,    4,   3  : '  2 Activity Code
+	DATA   3,   43,    3,   47,   26,    2,   1  : '  3 Serial Number
+	DATA   5,   34,    5,   38,    2,    5,   2  : '  4 Mfr
+	DATA   5,   44,    5,   49,    8,    6,   4  : '  5 Type
+	DATA   7,    5,    7,   11,    6,   17,   5  : '  6 Volts
+	DATA   0,    0,    0,    0,    8,    0,   0  : '  7 Date rec'd
+	DATA   0,    0,    0,    0,   12,    0,   0  : '  8 P/O
+	DATA   7,   60,    7,   71,    1,   10,  17  : '  9 Dielectric
+	DATA   9,    5,    9,   12,   12,   11,   9  : ' 10 Region
+	DATA   9,   36,    9,   44,    3,   12,  10  : ' 11 Tester
+	DATA   9,   60,    9,   68,    2,   14,  11  : ' 12 Retirement Reason
+	DATA  22,    3,   22,    7,   50,   18,  14  : ' 13 REM
+	DATA   1,   34,   13,   42,    1,   13,  12  : ' 14 Accept (Y/N)
+	DATA   7,   32,    0,    0,    0,    0,   0  : ' 15
+	DATA  22,   61,    0,    0,    0,    0,   0  : ' 16
+	DATA  13,   25,    7,   37,    8,    9,   6  : ' 17 Test Date
+	DATA  17,   20,   22,   67,   10,   19,  13  : ' 18 Price
+	DATA  17,   45,   18,   22,    2,   20,  18  : ' 19 Damage code 1
+	DATA   0,    0,   18,   25,    2,   21,  19  : ' 20 Damage code 2
+	DATA   0,    0,   18,   28,    2,   22,  20  : ' 21 Damage code 3
+	DATA   0,    0,   18,   47,    2,   23,  21  : ' 22 Defect code 1
+	DATA   0,    0,   18,   50,    2,   24,  22  : ' 23 Defect code 2
+	DATA   0,    0,   18,   53,    2,    1,  23  : ' 24 Defect code 3
+
+'   End of data
+'============================================================================
+'   Turn on error handler
+'----------------------------------------------------------------------------
+	ON ERROR GOTO NetProblem
+'============================================================================
+'   Init value variables
+	Ptr% = 1
+	EdRec% = 0
+	FOR x% = 1 TO 24
+		IF Arow%(x%) > 0 THEN
+			Value$(x%) = SPACE$(Alen%(x%))
+		END IF
+	NEXT
+'============================================================================
+Menu:
+	  
+	DO
+		CLOSE
+		x$ = PrintMenu$
+   
+		CallPrg% = 1
+		x% = VAL(x$)
+   
+		SELECT CASE (x%)
+			CASE 1
+				GOTO ListRecs
+			CASE 2
+				GOTO RecsOnFile
+			CASE 3
+				Flag% = VAL(x$)
+				CHAIN "RTDATA"
+			CASE 4
+				GOTO EditRecord
+			CASE 5
+				GenerateRecords FileName$, 301
+				GOTO Menu
+			CASE 6
+				RUN "Menu"
+			CASE 7
+				EditIniFile "Rt.Ini", Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%
+	END SELECT
+	LOOP UNTIL x% = 6
+
+	END
+'============================================================================
+'   List Reactiformer Test Records
+'----------------------------------------------------------------------------
+ListRecs:
+	CLS
+
+'   Get the file
+
+	GOSUB OpnFile
+	IF RecNum% = 0 THEN
+		GOTO Menu
+	END IF
+	x$ = " "
+	FOR Ptr% = 1 TO RecNum%
+		IF x$ <> CHR$(27) THEN
+			GET #1, Ptr% + 1, Buffer
+			Buff$ = Buffer.Buffer
+			Typ$ = LEFT$(Buff$, 1)
+			IF INSTR("56", Typ$) > 0 THEN
+				x$ = PrintScreen
+			END IF
+		END IF
+	NEXT
+
+'   Done with printing records. Prompt for return to menu.
+
+	CLOSE #Df%
+	PutXY 25, 1, SPACE$(79)
+	GOTO Menu
+'============================================================================
+'   List reactiformer records in file
+'----------------------------------------------------------------------------
+RecsOnFile:
+
+	CLS
+	COLOR Mfg%, Mbg%
+	PutXY 25, 1, SPACE$(79)
+	GOSUB OpnFile
+	IF RecNum% = 0 THEN
+		GOTO Menu
+	END IF
+	LineCount% = Heading%
+	x$ = " "
+	FOR Ptr% = 1 TO RecNum%
+		IF x$ <> CHR$(27) THEN
+			GET #1, Ptr% + 1, Buffer
+			Buff$ = Buffer.Buffer
+			x$ = LEFT$(Buff$, 1)
+			IF INSTR("56", x$) > 0 THEN
+				Parse
+				LineCount% = PrintLine%(LineCount%, Ptr%, Value$())
+			END IF
+			IF LineCount% >= 20 THEN
+				x$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), "ENTER to continue, ESC to return to menu")
+				IF x$ <> CHR$(27) THEN
+					LineCount% = Heading%
+				END IF
+			END IF
+		END IF
+	NEXT
+	CLOSE
+	IF LineCount% > 0 THEN
+		x$ = Get1Key$(CHR$(13), "Press ENTER to return to the menu")
+	END IF
+	GOTO Menu
+'============================================================================
+'   Open file subroutine
+'----------------------------------------------------------------------------
+OpnFile:
+	COLOR Mfg%, Mbg%
+	CLS
+	PutXY 25, 1, SPACE$(79)
+	Df% = FREEFILE
+	OPEN FileName$ FOR RANDOM AS #Df% LEN = LEN(Buffer)
+	GET #1, 1, Info
+	RecNum% = Info.Number
+	IF RecNum% < 1 THEN
+		CLOSE
+		KILL FileName$
+		CLS
+		PutXY 10, 20, "No file found on this disk."
+		PutXY 15, 20, "Try again? (Y/N)"
+		x$ = Get1Key$("YN", "")
+
+		IF x$ = "N" THEN
+			RETURN
+		END IF
+		CLS
+		x$ = Get1Key$(CHR$(13), "Insert new disk, then press ENTER")
+		GOTO OpnFile
+	END IF
+   
+	RETURN
+'============================================================================
+'   Subroutine to edit record
+'----------------------------------------------------------------------------
+EditRecord:
+	CLS
+	GOSUB OpnFile
+	CLS
+	IF RecNum% = 0 THEN
+		GOTO Menu
+	END IF
+	LOCATE 10, 20
+	PRINT USING "Record number to edit (1-####)"; RecNum%
+	INPUT EdRec%
+
+'   If the user wishes to back out, an entry of zero or
+'   more records than there are in the file will do so.
+
+	IF EdRec% < 1 OR EdRec% > RecNum% THEN
+		CLOSE
+		GOTO Menu
+	END IF
+	GET #1, EdRec% + 1, Buffer
+	Buff$ = Buffer.Buffer
+	Parse
+	x$ = LEFT$(Buff$, 1)
+	IF INSTR("56", x$) = 0 THEN
+		CLOSE
+		GOTO Menu
+	END IF
+	CallPrg% = 0
+	Flag% = 4
+	CLOSE
+	CHAIN "RTDATA"
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+BadDrive:
+	PutXY 10, 18, "There seems to be a problem with the drive."
+	PutXY 15, 24, "Please correct it and press ENTER"
+	x$ = Get1Key$(CHR$(13), "")
+	RESUME OpenIt
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+   
+	ELSE
+	   
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+
+	END IF
+   
+	IF Junk$ = CHR$(27) THEN
+		RESUME Menu
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of RTMenu main module
+'****************************************************************************
+
+'****************************************************************************
+'   Data parse routine
+'============================================================================
+SUB Parse
+'----------------------------------------------------------------------------
+   
+	SHARED Value$(), Buff$, Alen%()
+   
+	Value$(1) = MID$(Buff$, 2, Alen%(1))        '   Device Code
+	Value$(2) = MID$(Buff$, 991, Alen%(2))      '   Acvivity Code
+	Value$(3) = MID$(Buff$, 301, Alen%(3))      '   Serial Number
+	Value$(4) = MID$(Buff$, 28, Alen%(4))       '   Mfg
+	Value$(5) = MID$(Buff$, 33, Alen%(5))       '   Type
+	Value$(6) = MID$(Buff$, 329, Alen%(6))      '   Volts
+	Value$(9) = MID$(Buff$, 66, Alen%(9))       '   Dielectric Check
+	Value$(10) = MID$(Buff$, 901, Alen%(10))    '   Division
+	Value$(11) = MID$(Buff$, 71, Alen%(11))     '   Tester
+	Value$(12) = MID$(Buff$, 327, Alen%(12))    '   Retirement Reason
+	Value$(13) = MID$(Buff$, 75, Alen%(13))     '   Remarks
+	Value$(14) = MID$(Buff$, 133, Alen%(14))    '   Acceptable unit
+	Value$(17) = MID$(Buff$, 125, Alen%(17))    '   Test Date
+	Value$(18) = MID$(Buff$, 277, Alen%(18))    '   Price
+	Value$(19) = MID$(Buff$, 601, Alen%(19))    '   Damage code 1
+	Value$(20) = MID$(Buff$, 603, Alen%(20))    '   Damage code 2
+	Value$(21) = MID$(Buff$, 605, Alen%(21))    '   Damage code 3
+	Value$(22) = MID$(Buff$, 607, Alen%(22))    '   Defect code 1
+	Value$(23) = MID$(Buff$, 609, Alen%(23))    '   Defect code 2
+	Value$(24) = MID$(Buff$, 611, Alen%(24))    '   Defect code 3
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Clears screen, prints menu.  Returns menu choice.
+'============================================================================
+FUNCTION PrintMenu$
+'----------------------------------------------------------------------------
+
+	SHARED FileName$
+
+	CLS
+  
+	COLOR Mfg%, Mbg%
+
+	InFile% = FREEFILE
+	OPEN FileName$ FOR RANDOM AS #InFile% LEN = LEN(Buffer)
+	GET #InFile%, 1, Info
+	CLOSE #InFile%
+
+'   Clear Status Line
+
+	LOCATE 25, 1, 0
+	PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+	 
+	DrawMenuBox 1, 24, 6, 20, 78
+
+'   Print Menu Text
+
+	Cputs Company$, 2
+	Cputs Facility$, 3
+	PutXY 4, 22, "Transformer Record Data Entry System"
+	PutXY 5, 34, "Reactiformer Menu"
+
+'   Menu choice text
+
+	PutXY 8, 24, "1. List Reactiformer Test Records"
+	PutXY 9, 24, "2. List of Reactiformers in File"
+	PutXY 10, 24, "3. Enter Reactiformer Data"
+	PutXY 11, 24, "4. Edit Reactiformer Data"
+	PutXY 12, 24, "5. Generate Reactiformer Records"
+	PutXY 14, 24, "6. Exit"
+	PutXY 16, 24, "C - Change Colors"
+
+	Cputs STR$(Info.Number) + " records in file.", 19
+
+	PutXY 22, 32, "Option number? "
+
+'   Get input
+ 
+	PutXY 2, 77 - LEN(Version$), Version$
+ 
+	COLOR Mfg%, Mbg%
+	DO
+		DO
+			PutXY 5, 3, DATE$
+			PutXY 5, 69, TIME$
+			PutXY 2, 3, DayOfWeek$(DATE$)
+			LOCATE , , 0
+			x$ = UCASE$(INKEY$)
+		LOOP WHILE x$ = ""
+		IF x$ = CHR$(27) THEN
+			x$ = "6"
+		END IF
+		IF x$ = "C" THEN
+			x$ = "7"
+		END IF
+	LOOP WHILE INSTR("1234567", x$) = 0
+   
+	PrintMenu$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Subroutine to print the test record
+'============================================================================
+FUNCTION PrintScreen$
+'----------------------------------------------------------------------------
+		   
+	SHARED Buff$, Ptr%, RecNum%
+	SHARED Prow%(), Pcol%(), Prompt$()
+	SHARED Arow%(), Acol%(), Value$()
+   
+	PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 24, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 24
+   
+	COLOR Mfg%, Mbg%
+   
+	Msg$ = "(Record" + STR$(Ptr%) + " of" + STR$(RecNum%) + ") ENTER to continue, ESC to return to menu."
+   
+	x$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), Msg$)
+	PrintScreen$ = x$
+'****************************************************************************
+END FUNCTION
+

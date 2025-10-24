@@ -1,0 +1,162 @@
+'   $title:'REMFL - Remove old records from GSL tracking file'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   version 0.11
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1993
+'       First release
+'   September, 1993
+'       Updated name for screen display
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DecDate$ (TheDate$, Decrement%)
+DECLARE FUNCTION DOY2YyMmDd$ (TheDate$)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION MDY2DOY$ (TheDate$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+'============================================================================
+'   Turn on the error trap
+'----------------------------------------------------------------------------
+    ON ERROR GOTO NetProblem
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+   
+'   Program code actually starts here.
+
+    Decrement% = VAL(COMMAND$)
+
+'   If there's no number of days to keep specified, don't do anything.
+
+    CLS
+    IF Decrement% < 1 THEN
+        PRINT "REMFL - Remove old records from tracking file - version 0.10"
+        PRINT "SYNTAX: REMFL ##"
+        PRINT "Where ## is the number of days to keep records"
+        END
+    END IF
+
+'   There was a number on the command line.  Process the file.
+'   First, get a little information from DATAFILE for the screen display
+
+    InFile% = FREEFILE
+    OPEN "DATAFILE" FOR INPUT AS #InFile%
+    LINE INPUT #InFile%, Company$
+    Company$ = LTRIM$(RTRIM$(Company$))
+    LINE INPUT #InFile%, Lab$
+    Lab$ = LTRIM$(RTRIM$(Lab$))
+    CLOSE #InFile%
+   
+'   This screen display will keep any observers posted as to what's happening.
+
+    COLOR 15, 0
+    FOR Counter% = 5 TO 14
+        SELECT CASE Counter%
+            CASE 5
+                Cputs "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿", Counter%
+            CASE 9, 12
+                Cputs "ÃÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ´", Counter%
+            CASE 14
+                Cputs "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ", Counter%
+            CASE ELSE
+                Cputs "³                                           ³", Counter%
+        END SELECT
+    NEXT
+    Cputs Company$, 6
+    Cputs Lab$, 7
+    Cputs "Record delete utility", 8
+    PutXY 10, 24, "Records copied"
+    PutXY 11, 24, "Records discarded"
+    PutXY 13, 24, "Records processed"
+
+'   Now calculate the cutoff date for discard/keep.
+
+    Temp$ = DecDate$(MDY2DOY$(DATE$), Decrement%)
+   
+    OldDate$ = LEFT$(Temp$, 2) + DOY2YyMmDd$(Temp$)
+
+'   Find the file using the same .ini file that put it where it is.
+
+    InFile% = FREEFILE
+    OPEN "Genfl.Ini" FOR INPUT AS #InFile%
+    LINE INPUT #InFile%, Path$
+    LINE INPUT #InFile%, Path$
+    CLOSE #InFile%
+
+    InFile% = FREEFILE
+    OPEN Path$ FOR INPUT AS #InFile%
+  
+'   We need a temporary file for the operation.
+
+    OutFile% = FREEFILE
+    OPEN "RemFl.Tmp" FOR OUTPUT AS #OutFile%
+
+'   This loop reads the data file one record at a time, then checks the
+'   record date.  If the record date is before the cutoff date, nothing is
+'   done with the record, which discards it.  If the date is equal to or
+'   later than the cutoff, the record is copied to the temporary file, which
+'   will later overwrite the data file.
+
+    DO
+        LINE INPUT #InFile%, Work$
+        RecDate$ = MID$(Work$, 127, 4) + MID$(Work$, 123, 4)
+        Processed% = Processed% + 1
+        PutXY 13, 46, RIGHT$(SPACE$(6) + STR$(Processed%), 6)
+        IF RecDate$ >= OldDate$ THEN
+            PRINT #OutFile%, Work$
+            Kept% = Kept% + 1
+            PutXY 10, 46, RIGHT$(SPACE$(6) + STR$(Kept%), 6)
+        ELSE
+            Discarded% = Discarded% + 1
+            PutXY 11, 46, RIGHT$(SPACE$(6) + STR$(Discarded%), 6)
+        END IF
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+  
+'   Now copy the temporary file over the data file.  This removes the
+'   discarded records and reclaims the disk space.
+
+    SHELL "copy RemFl.Tmp " + Path$ + " >nul"
+    KILL "RemFL.Tmp"
+
+'============================================================================
+Split:
+    END
+'============================================================================
+'   Beginning of error trap
+'----------------------------------------------------------------------------
+'   Network Problems.  Basically, what this system does in repsonse to a
+'   network, or any error, for that matter, error is wait 10 seconds, then
+'   retry the failing request.  This system isn't perfect, but works well
+'   enough I may not change it for full network compliance.  If the DEBUG
+'   environment variable is set to "YES", the system error number is
+'   presented on the status line.  In any case, pressing the escape key will
+'   exit the program.
+
+NetProblem:
+
+    IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+    ELSE
+        x& = TIMER + 10
+        DO
+        Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+    END IF
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of REMFL.BAS main module
+'****************************************************************************
+

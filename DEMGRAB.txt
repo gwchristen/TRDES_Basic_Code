@@ -1,0 +1,161 @@
+'   $title:'DemGrab - Grabs Demand Machine MRDES data'
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   February, 1996
+'       First issue
+'============================================================================
+'   Declare prodedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION ElapsedTime$ (Start$, Finish$, Lstart$, Lfinish$)
+DECLARE FUNCTION ParseCmdLine% (Argv$())
+'============================================================================
+'   Define record structures
+'----------------------------------------------------------------------------
+'   The information record type is used in the first record of the data file
+'   to track number of records, processed/unprocessed file and initialization,
+'   edit and process dates.  The GSL has reserved the first 250 characters of
+'   the 500 available for its own uses.  The remaining 250 are available for
+'   use by anyone needing them and willing to write the code to access them.
+
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+        ProcessFlag AS STRING * 1
+        InitDate AS STRING * 10
+        EditDate AS STRING * 10
+        ProcDate AS STRING * 10
+        Signature AS STRING * 20
+    END TYPE
+
+
+'   Define buffer record type.  This one's just a 500 character block.
+'   How to use it is defined outside the record type.
+    TYPE DataBuffer
+        Work AS STRING * 500
+    END TYPE
+'============================================================================
+
+    DIM DataRec  AS DataBuffer, InfoRec AS InfoRecord
+    DIM Argv$(5)
+
+   
+    Argc% = ParseCmdLine%(Argv$())
+   
+    Lstart$ = Argv$(4)
+    Lfinish$ = Argv$(5)
+   
+    Ext$ = ENVIRON$("TODAY")
+
+    InFile% = FREEFILE
+    OPEN "Mrdes.Dat" FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+    GET #InFile%, 1, InfoRec
+   
+    OutFile% = FREEFILE
+   
+    OPEN Argv$(1) + "." + Ext$ FOR OUTPUT AS #OutFile%
+
+    IF InfoRec.NumberOfRecords < 2 THEN
+        PRINT #OutFile%, "No tests this date"
+        CLOSE
+        END
+    END IF
+
+    PRINT #OutFile%, SPACE$(10) + Argv$(1)
+    PRINT #OutFile%, "Serial    Code    Tester  Test Date Test Time Test ET"
+
+    FOR Counter% = 2 TO InfoRec.NumberOfRecords
+        IF Counter% = 2 THEN
+            Start$ = Argv$(2)
+        END IF
+        GET #InFile%, Counter% + 1, DataRec
+        w$ = DataRec.Work
+        IF LTRIM$(RTRIM$(MID$(w$, 232, 5))) <> "" THEN
+            Ctr% = Ctr% + 1
+            Finish$ = MID$(w$, 493, 8)
+            PRINT #OutFile%, MID$(w$, 7, 9) + " " + MID$(w$, 2, 5) + "    " + MID$(w$, 20, 6) + " " + MID$(w$, 51, 8) + "  " + MID$(w$, 493, 8) + "  " + ElapsedTime$(Start$, Finish$, Lstart$, Lfinish$)
+            Start$ = Finish$
+        END IF
+    NEXT
+    PRINT #OutFile%, "There were"; Ctr%; " meters tested on this board this day."
+    PRINT #OutFile%, "There was " + ElapsedTime$(Finish$, Argv$(3), Lstart$, Lfinish$) + " from the last test to the end of the day"
+    CLOSE
+    END
+'============================================================================
+'   End of main module
+'****************************************************************************
+
+'****************************************************************************
+'   Function to return the elapsed time between two times passed in command
+'   line arguements.
+'============================================================================
+FUNCTION ElapsedTime$ (Start$, Finish$, Lstart$, Lfinish$)
+'----------------------------------------------------------------------------
+    Ssecond% = VAL(RIGHT$(Start$, 2))
+    Sminute% = VAL(MID$(Start$, 4, 2))
+    Shour% = VAL(LEFT$(Start$, 2))
+   
+    Fsecond% = VAL(RIGHT$(Finish$, 2))
+    Fminute% = VAL(MID$(Finish$, 4, 2))
+    Fhour% = VAL(LEFT$(Finish$, 2))
+
+    IF Start$ < Lstart$ AND Finish$ > Lfinish$ THEN
+        s% = VAL(RIGHT$(Lfinish$, 2)) - VAL(RIGHT$(Lstart$, 2))
+        m% = VAL(MID$(Lfinish$, 4, 2)) - VAL(MID$(Lstart$, 4, 2))
+        h% = VAL(LEFT$(Lfinish$, 2)) - VAL(LEFT$(Lstart$, 2))
+    ELSE
+        s% = 0
+        m% = 0
+        h% = 0
+    END IF
+   
+    ESecond% = Fsecond% - Ssecond% - s%
+    Eminute% = Fminute% - Sminute% - m%
+    Ehour% = Fhour% - Shour% - h%
+   
+    IF ESecond% < 0 THEN
+        ESecond% = ESecond% + 60
+        Eminute% = Eminute% - 1
+    END IF
+    IF Eminute% < 0 THEN
+        Eminute% = Eminute% + 60
+        Ehour% = Ehour% - 1
+    END IF
+    IF Ehour% < 0 THEN
+        Ehour% = Ehour% + 24
+    END IF
+   
+    Hour$ = RIGHT$("00" + LTRIM$(RTRIM$(STR$(Ehour%))), 2)
+    Minute$ = RIGHT$("00" + LTRIM$(RTRIM$(STR$(Eminute%))), 2)
+    Second$ = RIGHT$("00" + LTRIM$(RTRIM$(STR$(ESecond%))), 2)
+    ElapsedTime$ = Hour$ + ":" + Minute$ + ":" + Second$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Parses command line, puts argvs in string array Argv$, returns argc.
+'============================================================================
+FUNCTION ParseCmdLine% (Argv$())
+'----------------------------------------------------------------------------
+    Argc% = 0
+    Work$ = LTRIM$(COMMAND$) + SPACE$(5)
+    IF LTRIM$(RTRIM$(Work$)) = "" THEN
+        ParseCmdLine% = 0
+        EXIT FUNCTION
+    END IF
+    WHILE LTRIM$(RTRIM$(Work$)) > ""
+        Argc% = Argc% + 1
+        c$ = LEFT$(Work$, 1)
+        Work$ = MID$(Work$, 2)
+        WHILE INSTR(CHR$(9) + CHR$(32) + ",", c$) = 0
+            Argv$(Argc%) = Argv$(Argc%) + c$
+            c$ = LEFT$(Work$, 1)
+            Work$ = MID$(Work$, 2)
+        WEND
+    WEND
+    ParseCmdLine% = Argc%
+'****************************************************************************
+END FUNCTION
+

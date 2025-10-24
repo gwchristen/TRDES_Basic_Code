@@ -1,0 +1,101 @@
+'   $title:'RFL Accuracies to Disk'
+'   Version 0.20
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   April, 1991
+'       Started
+'       First release
+'============================================================================
+'   The general idea here is to keep looking at the communications line from
+'   the RFL 5455 watthour meter test board.  When the test board outputs a
+'   character, read the character from the communication buffer, and write it
+'   to a file.  Keep the output file closed as much as possible, only opening
+'   it to do the actual write.  Keep processing in this manner until the
+'   operator presses the Esc key.  This program is often refered to as
+'   "dumb as dirt".
+'============================================================================
+'   Parse the command line
+'----------------------------------------------------------------------------
+'   Version Number
+    IF UCASE$(LTRIM$(RTRIM$(COMMAND$))) = "V" THEN
+        PRINT "READRFL version 0.20"
+        END
+    END IF
+'----------------------------------------------------------------------------
+'   Check for test board number
+    C$ = LTRIM$(RTRIM$(COMMAND$))
+    IF C$ = "" OR INSTR("12", C$) = 0 THEN
+        CLS
+        LOCATE 10, 19
+        PRINT "Useage: READRFL 1 or READRFL 2"
+        LOCATE 12, 19
+        PRINT "The 1 or 2 specifies RFL test board 1 or 2"
+        END
+    END IF
+'============================================================================
+'   Now generate the output filename
+'----------------------------------------------------------------------------
+    Months$ = "JanFebMarAprMayJunJulAugSepOctNovDec"
+    Month$ = MID$(Months$, (VAL(LEFT$(DATE$, 2)) - 1) * 3 + 1, 3)
+    FileName$ = "R" + C$ + Month$ + MID$(DATE$, 4, 2) + ".dat"
+    CLS
+    LOCATE 10, 10
+    PRINT "The data will be written to file: "; FileName$
+    LOCATE 20, 10
+    PRINT "Press Enter if acceptable, Esc to exit"
+    DO
+        Accept$ = INKEY$
+    LOOP UNTIL Accept$ = CHR$(13) OR Accept$ = CHR$(27)
+    IF Accept$ = CHR$(27) THEN
+        CLS
+        END
+    END IF
+'============================================================================
+'   The loop that does the deed
+'----------------------------------------------------------------------------
+'   Print exit message.  Message will scroll offscreen eventually
+
+    PRINT "Press Esc to exit"
+  
+'   Get a file buffer number for the communications line.  Buffer number will
+'   always be one in this application, but get used to doing it the right way.
+
+    Cb% = FREEFILE
+    OPEN "COM1:1200,N,8,2,CS,DS" FOR RANDOM AS #Cb%
+   
+'   Basic scam in the loop is to strobe the keyboard, and grab a key if one's
+'   pressed, then check the communications buffer.  If the buffer has
+'   information, request a file buffer, open the file for binary access,
+'   position the pointer one byte past the end to extend the file, and write
+'   whatever was read from the communication buffer.  Then print the data
+'   from the communication buffer, removing line feeds to keep the QB screen
+'   driver from screwing things up.  Then check any character from the
+'   keyboard to see if it's the Esc key.  If it is, close the communications
+'   buffer and exit.
+
+    DO
+        Ex$ = INKEY$
+        IF LOC(Cb%) > 0 THEN
+            Work$ = INPUT$(LOC(Cb%), #Cb%)
+            Df% = FREEFILE
+            OPEN FileName$ FOR BINARY AS Df%
+            SEEK #Df%, LOF(Df%) + 1
+            PUT #Df%, , Work$
+            FOR Counter% = 1 TO LEN(Work$)
+                Ch$ = MID$(Work$, Counter%, 1)
+                IF Ch$ <> CHR$(10) THEN
+                    PRINT Ch$;
+                END IF
+            NEXT
+            CLOSE #Df%
+        END IF
+    LOOP UNTIL Ex$ = CHR$(27)
+    CLOSE
+'============================================================================
+'   End of READRFL.BAS
+'****************************************************************************
+

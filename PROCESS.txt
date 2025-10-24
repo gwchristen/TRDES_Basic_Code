@@ -1,0 +1,70 @@
+'   $title:'Process - Process MDS 2 interface files'
+'   Ken Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Canton, OH
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'       August, 1998
+'============================================================================
+'   Define record type(s)
+'----------------------------------------------------------------------------
+    TYPE CompanyRecord
+        id AS STRING * 2
+        one AS LONG
+        two AS LONG
+        three AS LONG
+        four AS LONG
+        five AS LONG
+        six AS LONG
+        seven AS LONG
+        total AS LONG
+    END TYPE
+'============================================================================
+'   Dimension arrays, records, etc
+'----------------------------------------------------------------------------
+    DIM RecType(10) AS CompanyRecord
+    DIM FileName$(20)
+'============================================================================
+'   Get the candidate input filenames
+'----------------------------------------------------------------------------
+    InFile$ = LTRIM$(RTRIM$(COMMAND$))
+    IF InFile$ = "" THEN
+        CLS
+        PRINT "USEAGE:  Process <input filename>"
+        PRINT "where <input filename is the file containing the list of files"
+        PRINT "to be proecessed"
+        END
+    END IF
+   
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    Counter% = 0
+    DO
+        LINE INPUT #InFile%, Work$
+        Work$ = LTRIM$(RTRIM$(Work$))
+        IF Work$ > "" AND INSTR("#;'@", LEFT$(Work$, 1)) = 0 THEN
+            TestFile% = FREEFILE
+            OPEN Work$ FOR BINARY AS #TestFile%
+            IF LEN(TestFile%) = 0 THEN
+                CLOSE #TestFile%
+                KILL Work$
+            ELSE
+                CLOSE #TestFile%
+                Counter% = Counter% + 1
+                FileName$(Counter%) = Work$
+            END IF
+        END IF
+    LOOP UNTIL EOF(InFile%)
+    CLOSE #InFile%
+    IF Counter% = 0 THEN
+        CLS
+        PRINT "No records to process"
+        END
+    END IF
+
+
+
+
+

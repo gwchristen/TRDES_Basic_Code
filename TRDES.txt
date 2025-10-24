@@ -1,0 +1,814 @@
+'   $title:'TRDES - TRDES specific routines'
+'   Ken Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Version 1.00
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   (No changes in past year)
+'============================================================================
+'   Define record type(s)
+'----------------------------------------------------------------------------
+'   Repair data record type
+'   This looks at the repair list record as it is received from Enable
+    TYPE RepairData
+        Serial AS STRING * 9
+        Code AS STRING * 5
+        Area AS STRING * 1
+        Mfr AS STRING * 2
+    END TYPE
+    TYPE InfoRecord
+        Number AS INTEGER
+        Signature AS STRING * 5
+    END TYPE
+ 
+    TYPE DataRecord
+        Buffer AS STRING * 1000
+    END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION AcCalc$ (Ratio$, Phase$, Alen%, Sign%)
+DECLARE FUNCTION AddSign$ (Work$, Alen%)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DayOfWeek$ (Today$)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, LengTh%)
+DECLARE SUB ErrMsg (Msg$, ClrFlag%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION Heading% ()
+DECLARE FUNCTION Julian& ()
+DECLARE FUNCTION PrintLine% (LineCount%, Ptr%, Value$())
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE FUNCTION Round$ (Value$, Alen%)
+'============================================================================
+Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+
+'****************************************************************************
+'   Calculate accuracy class from Ratio and Phase error
+'   Replacement formula per Jack Carr - January, 1990
+'   Minor mod in May, 1994, to make the same routine work for both current
+'   and voltage transformers.  The only difference seems to be the
+'   calculation of the correction factor using the ratio and phase error.
+'============================================================================
+FUNCTION AcCalc$ (Ratio$, Phase$, Alen%, Sign%)
+'----------------------------------------------------------------------------
+'   Beta is in minutes
+
+    Beta = VAL(Phase$)
+
+'   Calculate ratio correction factor from formula
+
+    Ratio = VAL(Ratio$) / 100
+   
+'   Sign% must be either -1 or +1
+
+    Tcf = Ratio + (Beta / 2600) * Sign%
+
+'   Use the greater of what we calculated or the transformer ratio error
+
+    IF ABS(1 - Tcf) > ABS(1 - Ratio) THEN
+        AcClass = ABS(1 - Tcf) * 100
+    ELSE
+        AcClass = ABS(1 - Ratio) * 100
+    END IF
+
+'   Round to two decimal places
+
+    IF AcClass = 0 THEN
+        AcCalc$ = LEFT$(".00" + SPACE$(Alen%), Alen%)
+        EXIT FUNCTION
+    END IF
+  
+    AcClass = (INT(AcClass * 100 + .5)) / 100
+    x$ = STR$(AcClass)
+
+'   If there's no period, somthing's wrong.
+'   Set return string to spaces and exit.
+
+    IF INSTR(x$, ".") = 0 THEN
+        AcCalc$ = SPACE$(Alen%)
+        EXIT FUNCTION
+    END IF
+
+'   Remove all characters ahead of period
+
+    x$ = LTRIM$(RTRIM$(x$))
+
+'   Make this string 4 characters and put it in the proper place.
+
+    AcCalc$ = LEFT$(x$ + SPACE$(Alen%), Alen%)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Activity code help screen
+'============================================================================
+SUB ACode
+'----------------------------------------------------------------------------
+    CLS
+    Cputs "Activity Codes", 2
+    PutXY 4, 28, "Code Description"
+    PRINT TAB(28); "---- -----------"
+    PRINT
+    PRINT
+    PRINT TAB(30); "01 New Transformer"
+    PRINT TAB(30); "04 Old Transformer"
+    z$ = Get1Key$(CHR$(13), "Press ENTER to return to data entry/edit")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prefixes sign character to string, if necessary
+'============================================================================
+FUNCTION AddSign$ (Work$, Alen%)
+'----------------------------------------------------------------------------
+    Work$ = LTRIM$(RTRIM$(Work$))
+    IF INSTR("+-", LEFT$(Work$, 1)) = 0 THEN
+        Work$ = "+" + Work$
+    END IF
+
+'   Make it the correct length
+
+    AddSign$ = LEFT$(Work$ + SPACE$(Alen%), Alen%)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks ratio for value within span specified in Environment variable
+'   RATIO.  Defaults to 2.00 if env variable is not set.  Check is disabled
+'   if variable is set to 0.00 value.
+'============================================================================
+SUB CheckRatio (Value$, ClrFlag%, LineNumber$)
+'----------------------------------------------------------------------------
+ 
+'   If the field is blank, check ends.
+
+    IF LTRIM$(RTRIM$(Value$)) = "" THEN
+        EXIT SUB
+    END IF
+ 
+'   Check for override value in environment variable
+
+    Allowed$ = LTRIM$(RTRIM$(ENVIRON$("RATIO")))
+ 
+'   If override is there, use that information, otherwise use default.
+
+    IF Allowed$ = "" THEN
+        Allowed! = 2!
+    ELSE
+        Allowed! = VAL(Allowed$)
+    END IF
+ 
+'   Setting override to zero disables check.
+
+    IF Allowed$ = "0.00" THEN
+        EXIT SUB
+    END IF
+  
+    IF ABS(VAL(Value$) - 100!) > Allowed! THEN
+        ErrMsg LineNumber$ + " Ratio out of limits.", ClrFlag%
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Open the Repair List file and find out how many records are in it.  The
+'   odd length allows direct export from Enable database to a text file which
+'   can be accessed with random (direct) access.  File is physically sorted
+'   so that a binary search technique can be used.  The maximum number of
+'   checks that need to be made to determine if a meter is in the file and
+'   find it is defined by the formula:
+'   int(log(Records in file)/log(2))+1
+'   This routine only reports to the operator and does not set any error or
+'   warning flags.  It is up to the operator to make the decision if and how
+'   to correct the record.
+'============================================================================
+SUB CheckRepairList (Value$(), Mfg%, Mbg%, Dfg%, Dbg%)
+'----------------------------------------------------------------------------
+
+    DIM RepData AS RepairData
+
+'   Process serial number into Repairs.Asc format
+
+    V$ = RIGHT$(STRING$(9, "0") + LTRIM$(RTRIM$(Value$(3))), 9)
+
+'   Open the repair list file.
+
+    RepDat% = FREEFILE
+    OPEN "Repairs.asc" FOR RANDOM AS #RepDat% LEN = LEN(RepData) + 2
+
+    IF LOF(RepDat%) < LEN(RepData) THEN
+        CLOSE #RepDat%
+        EXIT SUB
+    END IF
+
+'   Set the low and high limits
+
+    Low% = 1
+
+'   A repair list record, for these purposes, is 19 characters.  The extra two
+'   that don't show in the field statement are the CR/LF pair put in the file
+'   by Enable as it wrote the file as plain text.
+
+    High% = LOF(RepDat%) \ 19 + 1
+
+'   Now check the file to see if this serial number is in it.
+
+    WHILE Serial$ <> V$ AND High% > Low% + 1
+        Rec% = (High% + Low%) \ 2
+        GET #RepDat%, Rec%, RepData
+
+        Serial$ = RepData.Serial
+        Code$ = RepData.Code
+        Area$ = RepData.Area
+        Mfr$ = RepData.Mfr
+
+'       File serial number less than MRDES serial number
+
+        IF Serial$ < V$ THEN
+            Low% = Rec%
+        END IF
+
+'       File serial number greater than MRDES serial number
+
+        IF Serial$ > V$ THEN
+            High% = Rec%
+        END IF
+    WEND
+
+'   Grab the information from the file, then close the file
+
+    s$ = Serial$
+    c$ = Code$
+    a$ = Area$
+    m$ = Mfr$
+    t$ = Td$
+
+    CLOSE #RepDat%
+
+'   Default to no differences.
+
+    Diff% = 0
+
+'   Now see if we have a live one.
+
+    IF s$ <> V$ THEN
+        CLS
+        COLOR Mfg%, Mbg%
+        Cputs "Meter not found in STS file.", 10
+        Cputs "Please check to see that you have the correct serial number", 12
+        x$ = Get1Key$(CHR$(13), "Press ENTER to continue")
+        EXIT SUB
+    END IF
+
+    CLS
+    COLOR 15, 0
+    Cputs "TRDES Check with STS Information", 1
+    LOCATE 5, 30, 0
+    PRINT "TRDES          STS"
+    COLOR Mfg%, Mbg%
+    PutXY 6, 10, "Serial Number"
+    PutXY 6, 30, LTRIM$(RTRIM$(Value$(3)))
+    s$ = LTRIM$(RTRIM$(s$))
+    WHILE LEFT$(s$, 1) = "0" AND LEN(s$) > 1
+        s$ = MID$(s$, 2)
+    WEND
+
+    PutXY 6, 45, s$
+    PutXY 7, 10, "Code"
+    PutXY 7, 30, Value$(1)
+    PutXY 7, 45, c$
+
+'   If there's a difference, identify it.
+
+    IF c$ <> Value$(1) THEN
+        Diff% = Diff% + 1
+        COLOR Dfg%, Dbg%
+        PutXY 7, 60, "Difference"
+        COLOR Mfg%, Mbg%
+    END IF
+
+'   For the company, all we look at is the first character in the
+'   Co/Div/Area.  It'll be a 0 or a 7
+
+    PutXY 8, 10, "Company"
+
+    IF LEFT$(Value$(10), 1) = "0" THEN
+        Tcompany$ = "CSP"
+    ELSE
+        Tcompany$ = "OP"
+    END IF
+   
+    PutXY 8, 30, Tcompany$
+   
+    IF a$ = "0" THEN
+        Scompany$ = "CSP"
+    ELSE
+        Scompany$ = "OP"
+    END IF
+   
+    PutXY 8, 45, Scompany$
+
+    IF Tcompany$ <> Scompany$ THEN
+        Diff% = Diff% + 1
+        COLOR Dfg%, Dbg%
+        PutXY 8, 60, "Difference"
+        COLOR Mfg%, Mbg%
+    END IF
+
+    PutXY 9, 10, "Mfr"
+    PutXY 9, 30, Value$(4)
+    PutXY 9, 45, m$
+    LOCATE 9, 60
+
+    Mf$ = LTRIM$(RTRIM$(Value$(4)))
+
+    IF m$ <> Mf$ THEN
+        Diff% = Diff% + 1
+        COLOR Dfg%, Dbg%
+        PRINT "Difference"
+        COLOR Mfg%, Mbg%
+    END IF
+
+'   One of these messages will tell the story.
+
+    SELECT CASE Diff%
+        CASE 0
+            Cputs "No Differences found", 20
+            COLOR Mfg%, Mbg%
+            IF CkFlag% = 1 THEN
+                EXIT SUB
+            END IF
+        CASE 1
+            COLOR Dfg%, Dbg%
+            Cputs "1 Difference found", 20
+        CASE ELSE
+            COLOR Dfg%, Dbg%
+            Cputs STR$(Diff%) + " Differences found", 20
+            COLOR Mfg%, Mbg%
+    END SELECT
+
+    x$ = Get1Key$(CHR$(13), "Press ENTER to continue")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   List MDS damage codes
+'============================================================================
+SUB DamageCodes
+'----------------------------------------------------------------------------
+    CLS
+    Cputs "Damage Codes", 1
+    Cputs "Code Description", 3
+    Cputs "---- -----------", 4
+    PRINT
+    PRINT
+    PRINT TAB(15); "1       Tampering"
+    PRINT TAB(15); "2       Fire"
+    PRINT TAB(15); "3       Flood"
+    PRINT TAB(15); "4       Lightning"
+    PRINT TAB(15); "5       Overload"
+    PRINT TAB(15); "6       Time in years"
+    PRINT TAB(15); "8       Vandalism"
+    PRINT TAB(15); "9       Customer Intentional"
+    PRINT TAB(15); "10      Customer Unintentional"
+    PRINT TAB(15); "11      Employee Unintentional"
+    PRINT TAB(15); "12      In Transit"
+    PRINT TAB(15); "13      Reason NOT Known"
+    z$ = Get1Key$(CHR$(13), "Press ENTER to return to data entry/edit")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   List MDS defect codes
+'============================================================================
+SUB DefectCodes
+'----------------------------------------------------------------------------
+    CLS
+    Cputs "Defect Codes", 1
+    PRINT
+    PRINT
+    PRINT TAB(6); "Code  Description                      Code  Description"
+    PRINT TAB(6); "01 - Cover                             18 - Disk"
+    PRINT TAB(6); "02 - Gasket                            19 - Bearing Jewel"
+    PRINT TAB(6); "03 - Moisture in Meter                 20 - Bearings/Magnetic Suspension"
+    PRINT TAB(6); "04 - Foreign Matter in Meter           21 - Guide Pin"
+    PRINT TAB(6); "05 - Base                              22 - Magnet"
+    PRINT TAB(6); "06 - Surge Protectors                  23 - Air Gap"
+    PRINT TAB(6); "07 - Terminal Blade                    24 - Register Mesh"
+    PRINT TAB(6); "08 - Terminal Block                    25 - Register Mechanical"
+    PRINT TAB(6); "09 - Current Coil                      26 - Register KWH Solid State"
+    PRINT TAB(6); "10 - Potential Coil                    27 - Register KW Mechanical"
+    PRINT TAB(6); "11 - Insulation                        28 - Register KW Thermal"
+    PRINT TAB(6); "12 - Frame                             29 - Time Interval"
+    PRINT TAB(6); "13 - Lag Coil                          30 - Pulse Initiator"
+    PRINT TAB(6); "14 - Lag Plate                         31 - Reset Mechanism"
+    PRINT TAB(6); "                                       32 - Outside Accuracy Limit"
+    PRINT TAB(6); "16 - L. L. Adjustment                  33 - Dielectric Failure"
+    PRINT TAB(6); "17 - F. L. Adjustment                  34 - Mechanical Defect"
+    z$ = Get1Key$(CHR$(13) + CHR$(27), "Press Enter for next page, Esc to return")
+    IF z$ = CHR$(27) THEN
+        EXIT SUB
+    END IF
+    CLS
+    Cputs "Defect Codes", 1
+    PRINT
+    PRINT
+    PRINT TAB(8); "Code  Description                      Code  Description"
+    PRINT TAB(8); "35 - Broken Terminal                   49 - Power Supply Input Damage"
+    PRINT TAB(8); "36 - Broken Bushing                    50 - Power Supply Failure"
+    PRINT TAB(8); "37 - Damaged Insulation                51 - Rotation Sensor Failure"
+    PRINT TAB(8); "38 - Broken Shorting Device            52 - Display Failure"
+    PRINT TAB(8); "39 - Terminal Box                      53 - Modem Port Failure"
+    PRINT TAB(8); "40 - Defective Paint                   54 - Optic Port Failure"
+    PRINT TAB(8); "41 - Rust                              55 - EEPROM/ROM Failure"
+    PRINT TAB(8); "42 - Oil Leak                          56 - Pulse Input Failure"
+    PRINT TAB(8); "43 - Missing Nameplate                 57 - Load Control Output Failure"
+    PRINT TAB(8); "44 - Incorrect Polarity                58 - KYZ Output Failure"
+    PRINT TAB(8); "45 - Transformer Magnetized            59 - Data Storage Module Failure"
+    PRINT TAB(8); "46 - In Service Failure                60 - Failed in Stock"
+    PRINT TAB(8); "47 - Battery Failure                   61 - Failed During Test"
+    PRINT TAB(8); "48 - Battery Leakage"
+    z$ = Get1Key$(CHR$(13), "Press ENTER to return to data entry/edit")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Displays function keys
+'============================================================================
+SUB DisplayKeys (Xfer%, Mfg%, Mbg%, Dfg%, Dbg%)
+'----------------------------------------------------------------------------
+    PutXY 25, 1, SPACE$(78)
+    COLOR Mfg%, Mbg%
+    PutXY 25, 1, "1"
+    COLOR Dfg%, Dbg%
+    PRINT "WRITE ";
+    COLOR Mfg%, Mbg%
+    PRINT " 2";
+    COLOR Dfg%, Dbg%
+    PRINT "EXIT  ";
+    COLOR Mfg%, Mbg%
+    PRINT " 3";
+    COLOR Dfg%, Dbg%
+    IF Xfer% = 1 THEN
+        PRINT "XFER  ";
+    ELSE
+        PRINT "      ";
+    END IF
+    COLOR Mfg%, Mbg%
+    PRINT " 4";
+    COLOR Dfg%, Dbg%
+    PRINT "      ";
+    COLOR Mfg%, Mbg%
+    PRINT " 5";
+    COLOR Dfg%, Dbg%
+    PRINT "NXT FL";
+    COLOR Mfg%, Mbg%
+    PRINT " 6";
+    COLOR Dfg%, Dbg%
+    PRINT "PRV FL";
+    COLOR Mfg%, Mbg%
+    PRINT " 7";
+    COLOR Dfg%, Dbg%
+    PRINT "NXT CH";
+    COLOR Mfg%, Mbg%
+    PRINT " 8";
+    COLOR Dfg%, Dbg%
+    PRINT "PRV CH";
+    COLOR Mfg%, Mbg%
+    PRINT " 9";
+    COLOR Dfg%, Dbg%
+    PRINT "FIRST ";
+    COLOR Mfg%, Mbg%
+    PRINT " 0";
+    COLOR Dfg%, Dbg%
+    PRINT "HELP  ";
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Edit TRDES .ini file.
+'============================================================================
+SUB EditIniFile (FileName$, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%)
+'----------------------------------------------------------------------------
+    DO
+        COLOR 15, 0
+        DrawMenuBox 1, 24, 4, 21, 78
+        Cputs Company$, 2
+        Cputs Facility$, 3
+        PutXY 6, 20, "1 - Message character color" + STR$(Mfg%)
+        PutXY 7, 20, "2 - Message background color" + STR$(Mbg%)
+        PutXY 8, 20, "3 - Data field character color" + STR$(Dfg%)
+        PutXY 9, 20, "4 - Data field background color" + STR$(Dbg%)
+        PutXY 10, 20, "5 - Company header string"
+        Cputs Company$, 11
+        PutXY 12, 20, "6 - Facility header string"
+        Cputs Facility$, 13
+        PutXY 13, 20, "7 - Toggle cross check passed display flag (" + RTRIM$(MID$("ON OFF", 3 * CkFlag% + 1, 3)) + ")"
+        COLOR Mfg%, Mbg%
+        PutXY 6, 60, "Character"
+        COLOR Dfg%, Dbg%
+        PutXY 8, 60, "Data field"
+        COLOR 15, 0
+        Cputs "Select item to be changed by number 1 -4", 22
+        Cputs "Press Enter to save changes and exit, or Esc to abandon changes and exit", 23
+
+'   Get input
+  
+        DO
+            PutXY 3, 3, DATE$
+            PutXY 3, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            j$ = LTRIM$(RTRIM$(STR$(Julian&)))
+            PutXY 2, 77 - LEN(j$), j$
+            LOCATE , , 0
+            x$ = INKEY$
+        LOOP WHILE x$ = ""
+        SELECT CASE x$
+            CASE "1"
+                LOCATE 17, 20
+                INPUT ; "New message character color (0-15)", x%
+                IF x% <> Mbg% AND x% > 0 AND x% < 16 THEN
+                    Mfg% = x%
+                END IF
+            CASE "2"
+                LOCATE 17, 20
+                INPUT ; "New message background color (0-7):", x%
+                IF x% <> Mfg% AND x% >= 0 AND x% < 8 THEN
+                    Mbg% = x%
+                END IF
+            CASE "3"
+                LOCATE 17, 20
+                INPUT ; "New data field character color (0 - 15):", x%
+                IF x% <> Dbg% AND x% >= 0 AND x% < 16 THEN
+                    Dfg% = x%
+                END IF
+            CASE "4"
+                LOCATE 17, 20
+                INPUT ; "New data field background color (0-7):", x%
+                IF x% <> Dfg% AND x% >= 0 AND x% < 8 THEN
+                    Dbg% = x%
+                END IF
+            CASE "5"
+                Cputs "New company header string (max 50 chars)", 17
+                LOCATE 18, 20
+                LINE INPUT x$
+                IF x$ <> "" AND LEN(x$) < 50 THEN
+                    Company$ = x$
+                END IF
+            CASE "6"
+                Cputs "New facility header string (max 50 chars)", 17
+                LOCATE 18, 20
+                LINE INPUT x$
+                IF x$ <> "" AND LEN(x$) < 50 THEN
+                    Facility$ = x$
+                END IF
+            CASE "7"
+                CkFlag% = ABS(CkFlag% = 0)
+        END SELECT
+    LOOP UNTIL x$ = CHR$(27) OR x$ = CHR$(13)
+    IF x$ = CHR$(13) THEN
+        IniFile% = FREEFILE
+        OPEN FileName$ FOR OUTPUT AS #IniFile%
+        PRINT #IniFile%, Company$
+        PRINT #IniFile%, Facility$
+        PRINT #IniFile%, Mfg%
+        PRINT #IniFile%, Mbg%
+        PRINT #IniFile%, Dfg%
+        PRINT #IniFile%, Dbg%
+        PRINT #IniFile%, CkFlag%
+    END IF
+    CLOSE #IniFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Subprogram clear the screen, if necessary, then print the error message.
+'============================================================================
+SUB ErrMsg (Msg$, ClrFlag%)
+'----------------------------------------------------------------------------
+ 
+'   Clear screen, if necessary, and set flag
+
+    IF ClrFlag% = 0 THEN
+        CLS
+        LOCATE , , 0
+        ClrFlag% = 1
+        BEEP
+    END IF
+
+'   Print the message
+ 
+    PRINT Msg$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print function key definitions
+'============================================================================
+SUB FuncKeys
+'----------------------------------------------------------------------------
+    CLS
+    LOCATE 25, 1
+    PRINT SPACE$(79);
+    LOCATE 1, 28
+    PRINT "Function Key Definitions"
+    LOCATE 6, 14
+    PRINT "Esc - Perform Data Error Check without write to disk"
+    LOCATE 7, 14
+    PRINT "F1  - Perform Data Error Check and write to disk"
+    LOCATE 8, 14
+    PRINT "F2  - Exit to Menu"
+    LOCATE 9, 14
+    PRINT "F3  - Data Transfer (not for RT records)"
+    LOCATE 10, 14
+    PRINT "F4  - Search STS repair list"
+    LOCATE 11, 14
+    PRINT "F5  - Tab to next data entry field"
+    LOCATE 12, 14
+    PRINT "F6  - Tab to previous data entry field"
+    LOCATE 13, 14
+    PRINT "F7  - Cursor to next character"
+    LOCATE 14, 14
+    PRINT "F8  - Cursor to previous character"
+    LOCATE 15, 14
+    PRINT "F9  - Move to first data entry field"
+    LOCATE 16, 14
+    PRINT "F10 - Help screen"
+    LOCATE 17, 14
+    PRINT "ENTER = F5"
+    LOCATE 18, 14
+    PRINT "Backspace = F8"
+    z$ = Get1Key$(CHR$(13), "Press ENTER to return to data entry/edit")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Generate multiple records from template.
+'============================================================================
+SUB GenerateRecords (FileName$, Location%)
+'----------------------------------------------------------------------------
+   
+    DIM Info AS InfoRecord, Buffer AS DataRecord
+  
+    CLS
+    LOCATE 10, 20
+    LINE INPUT "Number of transformer records to generate "; NumCards$
+    NumCards% = VAL(NumCards$)
+
+'   Allow the user to back out, if desired, by inputting zero
+
+    IF NumCards% = 0 THEN
+        CHAIN "MMENU"
+    END IF
+
+'   Open and check the file
+
+    DataFile% = FREEFILE
+    OPEN FileName$ FOR RANDOM AS #DataFile% LEN = 1000
+    GET #DataFile%, 1, Info
+    NumRec% = Info.Number
+
+'   We accept a file with at least one record.
+
+    IF NumRec% < 1 THEN
+        CLOSE
+        CLS
+        PutXY 10, 27, "Not a valid template file!"
+        PutXY 15, 17, "Press ENTER to return to Menu"
+        x$ = Get1Key$(CHR$(13), "")
+        EXIT SUB
+    END IF
+
+'   We have a valid template file.  Process.
+
+    GET #1, NumRec% + 1, Buffer
+   
+    Work$ = Buffer.Buffer
+
+'   Get strings to work with.
+
+    Number$ = LTRIM$(RTRIM$(MID$(Work$, Location%, 26)))
+
+'   This is the loop that does the deed.
+
+    FOR NumRec% = NumRec% TO NumRec% + NumCards%
+        PRINT Number$
+        PUT #DataFile%, NumRec% + 1, Buffer
+        Number$ = MID$(STR$(VAL(Number$) + 1), 2)
+        MID$(Work$, Location%, 26) = Number$
+        Buffer.Buffer = Work$
+    NEXT
+
+'   Put the number of records in the file in the pointer
+
+    GET #DataFile%, 1, Info
+    Info.Number = Info.Number + NumCards%
+    Info.Signature = "TRDES"
+    PUT #DataFile%, 1, Info
+
+Split:
+    CLOSE
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Clears screen, prints heading, returns integer zero
+'============================================================================
+FUNCTION Heading%
+'----------------------------------------------------------------------------
+    CLS
+    PRINT TAB(10); "Rec#  Code  Serial       Div   Test date"
+    Heading% = 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints a line of data, returns LineCount%+1
+'============================================================================
+FUNCTION PrintLine% (LineCount%, Ptr%, Value$())
+'----------------------------------------------------------------------------
+    a$ = "####  \   \ \        \   \  \  \            \"
+    PRINT TAB(10); USING a$; Ptr%; Value$(1); Value$(3); Value$(10); Value$(53)
+    PrintLine% = LineCount% + 1
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints the screen according to arrays in residence.
+'============================================================================
+SUB PrtScrn (Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), Count%, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, Number%)
+'----------------------------------------------------------------------------
+    CLS
+
+'   Display prompts
+  
+    COLOR Mfg%, Mbg%
+   
+    FOR x% = 1 TO Number%
+        PutXY Prow%(x%), Pcol%(x%), Prompt$(x%)
+    NEXT
+
+'   Print strings
+  
+    COLOR Dfg%, Dbg%
+   
+    FOR x% = 1 TO Number%
+        PutXY Arow%(x%), Acol%(x%), Value$(x%)
+    NEXT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Read TRDES .ini file.
+'============================================================================
+SUB ReadIniFile (FileName$, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%)
+'----------------------------------------------------------------------------
+    IniFile% = FREEFILE
+    OPEN FileName$ FOR INPUT AS #IniFile%
+    LINE INPUT #IniFile%, Company$
+    LINE INPUT #IniFile%, Facility$
+    INPUT #IniFile%, Mfg%
+    INPUT #IniFile%, Mbg%
+    INPUT #IniFile%, Dfg%
+    INPUT #IniFile%, Dbg%
+    INPUT #IniFile%, CkFlag%
+    CLOSE #IniFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Round the quantity passed in Value$ to 2 places.  Make the returned
+'   string Alen% characters long.
+'============================================================================
+FUNCTION Round$ (Value$, Alen%)
+'----------------------------------------------------------------------------
+
+'   If it's all spaces, there's nothing to do.
+
+    IF Value$ = SPACE$(Alen%) THEN
+        Round$ = Value$
+        EXIT FUNCTION
+    END IF
+
+'   Something here.  Process.
+
+    Value! = VAL(Value$)
+    Value! = (INT((Value! * 100) + .5)) / 100
+    V$ = LTRIM$(STR$(Value!))
+    LengTh% = LEN(V$)
+    DecPt% = INSTR(V$, ".")
+    IF DecPt% = 0 THEN
+        V$ = V$ + "."
+    END IF
+    DecPt% = INSTR(V$, ".")
+    WHILE (LengTh% - DecPt%) < 2
+        V$ = V$ + "0"
+        LengTh% = LEN(V$)
+    WEND
+    Round$ = LEFT$(V$ + SPACE$(Alen%), Alen%)
+'****************************************************************************
+END FUNCTION
+

@@ -1,0 +1,94 @@
+'   $title:'UNPROC - MRDES II Unprocess Utility'
+'   Version 0.30
+'   Resets MRDES II data file process flag
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Record type
+'----------------------------------------------------------------------------
+	TYPE InfoRecord
+		NumberOfRecords AS INTEGER
+		ProcessFlag AS STRING * 1
+		InitDate AS STRING * 10
+		EditDate AS STRING * 10
+		ProcDate AS STRING * 10
+	END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION RunAgain$ ()
+'============================================================================
+	Programmer$ = "K.W.Kroninger"
+
+'   Just checking version number
+
+	IF LEFT$(UCASE$(LTRIM$(COMMAND$)), 1) = "V" THEN
+		PRINT "MRDES II Data File Process Flag Reset Utility - Version 0.30"
+		END
+	END IF
+
+   
+	DIM Info AS InfoRecord
+
+	IF LTRIM$(RTRIM$(COMMAND$)) = "" THEN
+		CLS
+		Cputs "(I)ncoming or (P)rocess File?", 10
+		Select$ = Get1Key$("IP", "")
+	ELSE
+		Select$ = UCASE$(LEFT$(LTRIM$(COMMAND$), 1))
+		IF INSTR("IP", Select$) = 0 THEN
+			END
+		END IF
+	END IF
+   
+'   Incoming is first string, Process is second.
+
+	DataFile% = FREEFILE
+	OPEN "ProcPath" FOR INPUT AS #DataFile%
+	LINE INPUT #DataFile%, FilePath$
+	IF Select$ = "P" THEN
+		LINE INPUT #DataFile%, FilePath$
+	END IF
+	CLOSE #DataFile%
+
+	DataFile% = FREEFILE
+	OPEN FilePath$ + "MRDES.DAT" FOR RANDOM AS #DataFile% LEN = 500
+	GET #DataFile%, 1, Info
+	IF Info.NumberOfRecords = 0 THEN
+		CLOSE #DataFile%
+		KILL FilePath$ + "MRDES.DAT"
+		Junk$ = RunAgain$
+		IF Junk$ = "Y" THEN
+			RUN
+		ELSE
+			END
+		END IF
+	END IF
+	Info.ProcessFlag = "U"
+	PUT #DataFile%, 1, Info
+	CLOSE
+	END
+'****************************************************************************
+'   End of UNPROC main module
+'****************************************************************************
+
+'****************************************************************************
+'   Inform operator file was not found and give another chance.
+'============================================================================
+FUNCTION RunAgain$
+'----------------------------------------------------------------------------
+	CLS
+	Cputs "File not found.  Try again?", 10
+	Junk$ = Get1Key$("YN", "(Y/N)")
+	RunAgain$ = Junk$
+'****************************************************************************
+END FUNCTION
+

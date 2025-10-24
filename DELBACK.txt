@@ -1,0 +1,117 @@
+'   $title:'DELBACK - Auto Delete MRDES II Backup Files'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Lab
+'   Canton, OH
+'   version 0.10
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1993
+'       First release
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION DecDate$ (TheDate$, Decrement%)
+DECLARE FUNCTION DOY2YyMmDd$ (TheDate$)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION MDY2DOY$ (TheDate$)
+'============================================================================
+'   Just checking for version number.
+'----------------------------------------------------------------------------
+    IF UCASE$(LEFT$(LTRIM$(COMMAND$), 1)) = "V" THEN
+        PRINT "MRDES II data file backup delete utility - version 0.10"
+        END
+    END IF
+    Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   Turn on the error trap
+'----------------------------------------------------------------------------
+    ON ERROR GOTO NetProblem
+'============================================================================
+
+'   Check command line, get value if there's one there.
+
+    IF LTRIM$(RTRIM$(COMMAND$)) <> "" THEN
+        Dec% = VAL(COMMAND$)
+    END IF
+
+'   If nothing's there, bitch about it and tell 'em how to use this utility.
+
+    IF Dec% = 0 THEN
+        CLS
+        PRINT "SYNTAX: DELBACK ##"
+        PRINT
+        PRINT "Where ## is the number of days back that the delete starts"
+        END
+    END IF
+
+'   Calculate where to start
+
+    TheName$ = DOY2YyMmDd$(DecDate$(MDY2DOY$(DATE$), Dec%))
+
+'   Now go check for files
+
+    SHELL "dir *. >" + TheName$
+
+    InFile% = FREEFILE
+    OPEN TheName$ FOR INPUT AS #InFile%
+
+'   The loop won't work properly in the first part of 2000.  I'll take care
+'   of the problem in 2000, if I'm still here.
+
+    DO
+        LINE INPUT #InFile%, Work$
+        IF LEFT$(Work$, 2) = LEFT$(TheName$, 2) AND LEFT$(Work$, 6) <= LEFT$(TheName$, 6) THEN
+            IF MID$(Work$, 7, 1) <> CHR$(32) THEN
+                PRINT LEFT$(Work$, 7)
+                KILL LEFT$(Work$, 7)
+            END IF
+        END IF
+    LOOP UNTIL EOF(InFile%)
+  
+EndOfFile:
+
+    CLOSE
+    KILL TheName$
+
+Split:
+    END
+'============================================================================
+'   Beginning of error trap
+'----------------------------------------------------------------------------
+'   Network Problems.  Basically, what this system does in repsonse to a
+'   network, or any error, for that matter, error is wait 10 seconds, then
+'   retry the failing request.  This system isn't perfect, but works well
+'   enough I may not change it for full network compliance.  If the DEBUG
+'   environment variable is set to "YES", the system error number is
+'   presented on the status line.  In any case, pressing the escape key will
+'   return to the main menu.
+
+NetProblem:
+
+    IF ERR = 62 THEN
+        RESUME EndOfFile
+    END IF
+
+    IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+    ELSE
+        x& = TIMER + 10
+        DO
+        Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+    END IF
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of DELBACK.BAS main module
+'****************************************************************************
+

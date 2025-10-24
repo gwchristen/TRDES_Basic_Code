@@ -1,0 +1,1780 @@
+'   Title:'SATOBAR - Print Meter/Transformer barcode labels on SATO printer'
+'   version 1.10
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Lab
+'   Canton, OH
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   November, 1998
+'       Modified to use lpt1:
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB AppendEOF (FileName$)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DayOfWeek$ (Today$)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, LengTh%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB Help1 ()
+DECLARE SUB Help2 ()
+DECLARE SUB Help3 ()
+DECLARE SUB Help4 ()
+DECLARE SUB Help5 ()
+DECLARE SUB Help6 ()
+DECLARE SUB Help7 ()
+DECLARE SUB Help8 ()
+DECLARE FUNCTION Julian& ()
+DECLARE FUNCTION Mayan$ ()
+DECLARE SUB PrintABarCode (Barcode$, Text$, Number%)
+DECLARE SUB PrintATextLabel (Text$, Number%)
+DECLARE SUB PrintEndOfJob ()
+DECLARE FUNCTION PrintMenu$ ()
+DECLARE SUB PrintMeterBarCode ()
+DECLARE SUB PrintOneSerialLabel ()
+DECLARE SUB PrintOneMeterBcode ()
+DECLARE SUB PrintOneTransfBcode ()
+DECLARE SUB PrintSerialNumbers ()
+DECLARE SUB PrintTransBarcode ()
+DECLARE SUB PutXY (Row%, Column%, Message$)
+'============================================================================
+    DIM SHARED MeterFile$, Pointer$, SerialFile$, TransfFile$, Version$
+   
+    Programmer$ = "K.W.Kroninger"
+    Version$ = "Version 1.10"
+    Pointer$ = "¯->"
+    SCREEN 0
+'============================================================================
+'   Turn on error handler
+'----------------------------------------------------------------------------
+    ON ERROR GOTO NetProblem
+'============================================================================
+
+'   Read .ini file
+
+    IniFile% = FREEFILE
+    OPEN "SatoBar.Ini" FOR INPUT AS #IniFile%
+    LINE INPUT #IniFile%, MeterFile$            ' Meter barcode file from Enable
+    MeterFile$ = LTRIM$(RTRIM$(MeterFile$))
+    LINE INPUT #IniFile%, TransfFile$           ' Transf barcode file from Enable
+    TransfFile$ = LTRIM$(RTRIM$(TransfFile$))
+    LINE INPUT #IniFile%, SerialFile$           ' Serial number file from Enable
+    SerialFile$ = LTRIM$(RTRIM$(SerialFile$))
+    CLOSE #IniFile%
+
+'   OK... Do it
+
+TheLoop:
+   
+    DO
+        Select$ = PrintMenu$
+        SELECT CASE Select$
+            CASE "1"                ' Meter Barcodes from disk file
+                PrintMeterBarCode
+            CASE "2"                ' Transf Barcodes from disk file
+                PrintTransBarcode
+            CASE "3"                ' S/N Labels from disk file
+                PrintSerialNumbers
+            CASE "4"                ' One Meter Barcode
+                PrintOneMeterBcode
+            CASE "5"                ' One Transformer Barcode
+                PrintOneTransfBcode
+            CASE "6"                ' One Serial Number Label
+                PrintOneSerialLabel
+            CASE "7"                ' Crate Barcodes
+                SHELL "Satocrat"
+            CASE "8"
+                SHELL "SatoFlex"
+        END SELECT
+    LOOP UNTIL Select$ = "9"
+    CLS
+    END
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+
+'   $INCLUDE: 'NetError.Inc'
+   
+    IF Junk$ = CHR$(27) THEN
+        RESUME TheLoop
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of SatoBar.Bas Main Module
+'****************************************************************************
+
+'****************************************************************************
+'   Meter Barcodes from disk file help screen
+'============================================================================
+SUB Help1
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+   
+    COLOR 15, 0
+   
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+  
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+     
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Meter Barcodes from disk file help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    PutXY 9, 8, "This routine prints barcodes from the file output from Enable."
+    PutXY 11, 8, "You may select one or two labels per file entry."
+
+'   Get input
+ 
+
+    PutXY 2, 77 - LEN(Version$), Version$
+ 
+    x$ = INKEY$
+   
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Transformer Barcodes from disk file help screen
+'============================================================================
+SUB Help2
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+  
+    COLOR 15, 0
+  
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+ 
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+    
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Transformer Barcodes from file help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    PutXY 9, 8, "This routine prints barcodes from the file output from Enable."
+    PutXY 11, 8, "You may select one, two or three labels per file entry."
+
+'   Get input
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    x$ = INKEY$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Serial Number Labels from disk file help screen
+'============================================================================
+SUB Help3
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+  
+    COLOR 15, 0
+  
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+ 
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+    
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Serial Number Labels from file help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    PutXY 9, 8, "This routine prints serial number from the file output from Enable."
+    PutXY 11, 8, "The serial number can have from 1 to 9 characters,"
+    PutXY 12, 8, "and embedded spaces are allowed."
+
+'   Get input
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    x$ = INKEY$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   One Meter Barcode help screen
+'============================================================================
+SUB Help4
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+  
+    COLOR 15, 0
+  
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+ 
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+    
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print One Meter Barcode help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    RowOffSet% = 10
+    Column% = 10
+    PutXY RowOffSet% + 0, Column%, "This routine allows the operator to input a barcode information for"
+    PutXY RowOffSet% + 1, Column%, "a meter.  A meter barcode must be 17 characters.  When using this"
+    PutXY RowOffSet% + 2, Column%, "routine, if the Esc key is pressed, any input is discarded and the"
+    PutXY RowOffSet% + 3, Column%, "operator is returned to the main menu.  If the Enter key is pressed and"
+    PutXY RowOffSet% + 4, Column%, "data has been input, it will be checked and if it passes, the operator"
+    PutXY RowOffSet% + 5, Column%, "will be prompted for the number of labels to be printed, 0 to 9."
+    PutXY RowOffSet% + 6, Column%, "A zero selection will return to the main menu, 1 through 9 will print"
+    PutXY RowOffSet% + 7, Column%, "the selected number of labels."
+   
+'   Get input
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    x$ = INKEY$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   One Transformer Barcode help screen
+'============================================================================
+SUB Help5
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+  
+    COLOR 15, 0
+  
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+ 
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+    
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print One Transformer Barcode help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    RowOffSet% = 10
+    Column% = 10
+    PutXY RowOffSet% + 0, Column%, "This routine allows the operator to input a barcode information for"
+    PutXY RowOffSet% + 1, Column%, "a transformer.  A transformer barcode must be 17 characters.  When"
+    PutXY RowOffSet% + 2, Column%, "using this routine, if the Esc key is pressed, any input is discarded"
+    PutXY RowOffSet% + 3, Column%, "and the operator is returned to the main menu.  If the Enter key is"
+    PutXY RowOffSet% + 4, Column%, "pressed and data has been input, it will be checked and if it passes,"
+    PutXY RowOffSet% + 5, Column%, "the operator will be prompted for the number of labels to be printed,"
+    PutXY RowOffSet% + 6, Column%, "0 to 9.  A zero selection will return to the main menu, 1 through 9"
+    PutXY RowOffSet% + 7, Column%, "will print the selected number of labels."
+ 
+'   Get input
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    x$ = INKEY$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   One Serial Number Label help screen
+'============================================================================
+SUB Help6
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+  
+    COLOR 15, 0
+  
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+ 
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+    
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print One Serial Number Label help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    RowOffSet% = 10
+    Column% = 10
+    PutXY RowOffSet% + 0, Column%, "This routine allows the operator to input a serial number"
+    PutXY RowOffSet% + 1, Column%, "(or anything for that matter) up to 9 characters to be"
+    PutXY RowOffSet% + 2, Column%, "printed.  When using this routine, if the Esc key is"
+    PutXY RowOffSet% + 3, Column%, "pressed, any input is discarded and the operator is returned"
+    PutXY RowOffSet% + 4, Column%, "to the main menu.  If the Enter key is pressed and data has"
+    PutXY RowOffSet% + 5, Column%, "been input, the operator will be prompted for the number of"
+    PutXY RowOffSet% + 6, Column%, "labels, 0 to 9.  A zero selection will return to the main"
+    PutXY RowOffSet% + 7, Column%, "menu, 1 through 9 will print the selected number of labels."
+  
+    Cputs "The printer ignores leading spaces!", 20
+
+'   Get input
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    x$ = INKEY$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Crate Barcodes help screen
+'============================================================================
+SUB Help7
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+  
+    COLOR 15, 0
+  
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+ 
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+    
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Crate Barcodes help screen", 5
+    Cputs "Press Enter to return to the main menu", 23
+
+'   Print the help text
+
+    COLOR 11, 0
+
+    Column% = 10
+    PutXY 9, Column%, "This routine calls Dick Oehler's Crate Barcode Print Program"
+    PutXY 11, Column%, "The program will prompt you for the starting label number"
+    PutXY 12, Column%, "(4 digits maximum) and the number of labels to print."
+    PutXY 13, Column%, "Entering 0 for the number of labels will terminate the"
+    PutXY 14, Column%, "program and return you to the menu"
+
+'   Get input
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    x$ = INKEY$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32), x$) > 0
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Freeform label help screen
+'============================================================================
+SUB Help8
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+    CLS
+    PRINT "This is the help screen for SatoFlex"
+    x$ = Get1Key$(CHR$(13), "Press Enter to exit")
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints string passed in BarCode$ as a code 39 barcode, and the string
+'   passed in Text$ as plain text.  The number of labels to be printed is
+'   passed in Number%.
+'============================================================================
+SUB PrintABarCode (Barcode$, Text$, Number%)
+'----------------------------------------------------------------------------
+    E$ = CHR$(27)                           ' Escape character
+    N% = Number%
+
+    LptFile% = FREEFILE
+    OPEN "lpt1:" FOR OUTPUT AS #LptFile%    ' Output to device lpt1:
+
+    R$ = "B102070*" + Barcode$ + "*"        ' Set up barcode string
+    W$ = "L0202" + E$ + "M" + Text$         ' Set up text string
+
+    PRINT #LptFile%, E$; "A";
+    PRINT #LptFile%, E$; "A3H0820V0001";    ' A3H SEEMS TO SET THE DEFAULT HORZ OFFSET
+
+    PRINT #LptFile%, E$; "H25"; E$; "V010"; E$; R$;        ' PRINTS THE BARCODE
+    PRINT #LptFile%, E$; "H40"; E$; "V092"; E$; W$;        ' PRINTS THE LINE OF TEXT
+   
+    PRINT #LptFile%, E$; "Q1";         ' Q SEEMS TO BE END OF MESSAGE
+    PRINT #LptFile%, E$; "Z";          ' Z SEEMS TO MAKE IT PRINT
+
+'   If there's more than 1, print the rest
+
+    WHILE N% > 1
+        PRINT #LptFile%, E$; "A"; E$; "C"; E$; "Z"    'SENDS COMMAND TO REPEAT THE LAST LINE
+        N% = N% - 1
+    WEND
+   
+    CLOSE #LptFile%                         ' Close this device
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print a serial number (or anything) up to 9 characters.
+'============================================================================
+SUB PrintATextLabel (Text$, Number%)
+'----------------------------------------------------------------------------
+   
+    E$ = CHR$(27)                           ' Escape character
+   
+    N% = Number%
+   
+    LptFile% = FREEFILE
+    OPEN "lpt1:" FOR OUTPUT AS #LptFile%    ' Output to device lpt1:
+
+    Q$ = "L0304" + E$ + "M" + LTRIM$(RTRIM$(Text$))
+
+    PRINT #LptFile%, E$; "A";
+    PRINT #LptFile%, E$; "A3H0820V0001";    ' A3H SEEMS TO SET THE DEFAULT HORZ OFFSET
+                                 ' (820 LOOKS GOOD) "V000" SETS VERT. OFFSET
+
+    PRINT #LptFile%, E$; "H00"; E$; "V030"; E$; Q$        ' PRINTS THE LINE OF TEXT
+    PRINT #LptFile%, E$; "Q1";         ' Q SEEMS TO BE END OF MESSAGE
+    PRINT #LptFile%, E$; "Z";          ' Z SEEMS TO MAKE IT PRINT
+   
+'   If there's more than one, print the rest
+
+    WHILE N% > 1
+        PRINT #LptFile%, E$; "A"; E$; "C"; E$; "Z"
+        N% = N% - 1
+    WEND
+
+    CLOSE #LptFile%                         ' Close this device
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print end of job label.
+'============================================================================
+SUB PrintEndOfJob
+'----------------------------------------------------------------------------
+   
+    E$ = CHR$(27)                               ' Escape character
+    LptFile% = FREEFILE
+    OPEN "lpt1:" FOR OUTPUT AS #LptFile%        ' Output to device lpt1:
+
+    Q$ = LTRIM$(RTRIM$("L0302" + E$ + "MEND OF JOB"))
+
+    PRINT #LptFile%, E$; "A";
+    PRINT #LptFile%, E$; "A3H0820V0001";    ' A3H SEEMS TO SET THE DEFAULT HORZ OFFSET
+                                 ' (820 LOOKS GOOD) "V000" SETS VERT. OFFSET
+
+    PRINT #LptFile%, E$; "H15"; E$; "V030"; E$; Q$        ' PRINTS THE LINE OF TEXT
+    PRINT #LptFile%, E$; "Q1";         ' Q SEEMS TO BE END OF MESSAGE
+    PRINT #LptFile%, E$; "Z";          ' Z SEEMS TO MAKE IT PRINT
+    PRINT #LptFile%, E$; "A"; E$; "C"; E$; "Z"  ' Print two labels
+   
+    CLOSE #LptFile%                             ' Close the device
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Clears screen, prints menu.  Gets, validates and returns operator
+'   selection.
+'============================================================================
+FUNCTION PrintMenu$
+'----------------------------------------------------------------------------
+    CLS
+    COLOR 15, 0
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+   
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+      
+    DrawMenuBox 1, 24, 6, 20, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Main Menu", 5
+
+'   Menu choice text
+
+    COLOR 10, 0
+   
+    RowOffSet% = 7
+    Column% = 19
+    PutXY RowOffSet% + 1, Column%, "1 - Print Meter Barcodes from disk file"
+    PutXY RowOffSet% + 2, Column%, "2 - Print Transformer Barcodes from disk file"
+    PutXY RowOffSet% + 3, Column%, "3 - Print Serial Number Labels from disk file"
+    PutXY RowOffSet% + 4, Column%, "4 - Print One Meter Barcode"
+    PutXY RowOffSet% + 5, Column%, "5 - Print One Transformer Barcode"
+    PutXY RowOffSet% + 6, Column%, "6 - Print One Serial Number Label"
+    PutXY RowOffSet% + 7, Column%, "7 - Print Crate Barcodes"
+    PutXY RowOffSet% + 8, Column%, "8 - Print Freeform Labels"
+    PutXY RowOffSet% + 9, Column%, "9 or Esc - Exit"
+   
+    COLOR 12, 0
+   
+'   Help is context sensitive in this system
+
+    Cputs "For help, put pointer on desired option and press H", RowOffSet% + 11
+
+    Sel% = 1
+   
+    COLOR 15, 0
+    PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+    Cputs SPACE$(60), 22
+    Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+
+'   Get input
+  
+    COLOR 11, 0
+
+    PutXY 2, 77 - LEN(Version$), Version$
+  
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF x$ = CHR$(27) THEN
+            x$ = "9"
+        END IF
+        IF x$ = CHR$(13) THEN
+            x$ = LTRIM$(RTRIM$(STR$(Sel%)))
+        END IF
+        IF LEN(x$) = 2 THEN
+            PutXY RowOffSet% + Sel%, Column% - 4, SPACE$(3)
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71                 ' Home
+                    Sel% = 1
+                CASE 72                 ' Up arrow
+                    Sel% = Sel% - 1
+                    IF Sel% < 1 THEN
+                        Sel% = 9
+                    END IF
+                CASE 79                 ' End
+                    Sel% = 9
+                CASE 80                 ' Down arrow
+                    Sel% = Sel% + 1
+                    IF Sel% > 9 THEN
+                        Sel% = 1
+                    END IF
+            END SELECT
+            COLOR 15, 0
+            PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+            x$ = "NO"
+            COLOR 15, 0
+            Cputs SPACE$(60), 22
+            Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+        END IF
+        IF x$ = "H" THEN
+            SELECT CASE Sel%
+                CASE 1          ' Meter Barcodes from disk file
+                    Help1
+                CASE 2          ' Print Transformer Barcodes from disk file
+                    Help2
+                CASE 3          ' Serial Number Labels from disk file
+                    Help3
+                CASE 4          ' One Meter Barcode
+                    Help4
+                CASE 5          ' One Transformer Barcode
+                    Help5
+                CASE 6          ' One Serial Number Label
+                    Help6
+                CASE 7          ' Crate Barcodes
+                    Help7
+                CASE 8
+                    Help8
+            END SELECT
+        END IF
+    LOOP WHILE INSTR("123456789", x$) = 0
+
+    PrintMenu$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints meter barcode from ascii file list.
+'============================================================================
+SUB PrintMeterBarCode
+'----------------------------------------------------------------------------
+    CLS
+   
+'   First, let's check to see if there's a file available
+
+    InFile% = FREEFILE
+   
+    OPEN MeterFile$ FOR BINARY AS #InFile%
+
+    IF LOF(InFile%) < 17 THEN
+        CLOSE #InFile%
+        Cputs "No data file found", 10
+        Junk$ = Get1Key$(CHR$(13) + CHR$(32), "Press Enter to return to main menu")
+        EXIT SUB
+    END IF
+ 
+    CLOSE #InFile%
+
+'   OK.. File's here.  Tack an EOF marker on it just in case Enable didn't
+
+    AppendEOF MeterFile$
+
+    COLOR 15, 0
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+  
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+     
+    DrawMenuBox 1, 24, 6, 20, 78
+
+'   Print Menu Heading
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Meter Barcode Labels from disk file", 5
+
+'   Print menu selection text
+
+    RowOffSet% = 10
+    Column% = 25
+    Sel% = 1
+
+    PutXY RowOffSet% + 1, Column%, "1 label per meter"
+    PutXY RowOffSet% + 2, Column%, "2 labels per meter"
+    PutXY RowOffSet% + 3, Column%, "3 or Esc - Exit"
+
+    COLOR 11, 0
+
+    PutXY 2, 77 - LEN(Version$), Version$
+   
+    COLOR 15, 0
+   
+    PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+    Cputs SPACE$(60), 22
+    Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+   
+'   Get operator selection of number of labels per entry, or exit routine
+
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF x$ = CHR$(27) THEN
+            x$ = "3"
+        END IF
+        IF x$ = CHR$(13) THEN
+            x$ = LTRIM$(RTRIM$(STR$(Sel%)))
+        END IF
+        IF LEN(x$) = 2 THEN
+            PutXY RowOffSet% + Sel%, Column% - 4, SPACE$(3)
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71                 ' Home
+                    Sel% = 1
+                CASE 72                 ' Up arrow
+                    Sel% = Sel% - 1
+                    IF Sel% < 1 THEN
+                        Sel% = 3
+                    END IF
+                CASE 79                 ' End
+                    Sel% = 3
+                CASE 80                 ' Down arrow
+                    Sel% = Sel% + 1
+                    IF Sel% > 3 THEN
+                        Sel% = 1
+                    END IF
+            END SELECT
+            COLOR 15, 0
+            PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+            x$ = "NO"
+            COLOR 15, 0
+            Cputs SPACE$(60), 22
+            Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+        END IF
+    LOOP WHILE INSTR("123", x$) = 0
+  
+    SELECT CASE x$
+        CASE "1"
+            NumberOfLabels% = 1
+        CASE "2"
+            NumberOfLabels% = 2
+        CASE "3"
+            EXIT SUB
+    END SELECT
+
+'   Ok, we're supposed to print labels.... Go!
+
+    CLS
+   
+'   Get file buffer in the currently approved way
+
+    InFile% = FREEFILE
+    
+'   Open the file
+
+    OPEN MeterFile$ FOR INPUT AS #InFile%
+
+'   Read and process till the end of the file is reached
+
+    DO
+        LINE INPUT #InFile%, Barcode$
+        Barcode$ = UCASE$(LTRIM$(RTRIM$(Barcode$)))
+        IF LEN(Barcode$) <> 17 THEN
+            PRINT "Problem with this entry - "; Barcode$
+            Junk$ = Get1Key$(CHR$(13) + CHR$(32), "Press Enter to continue")
+        ELSE
+            Text$ = LEFT$(Barcode$, 3) + " " + MID$(Barcode$, 4, 9) + " " + RIGHT$(Barcode$, 5)
+            PrintABarCode Barcode$, Text$, NumberOfLabels%
+        END IF
+    LOOP UNTIL EOF(InFile%)
+   
+    CLOSE
+   
+'   A couple of labels to id the end of the job, and to make it easier
+'   for the operator to tear off the labels.
+
+    PrintEndOfJob
+
+'   Delete the data file?
+
+    CLS
+
+    Cputs "Delete Meter Barcodes data file", 10
+
+    x$ = Get1Key$("YN", "(Y/N)")
+
+    IF x$ = "Y" THEN
+        KILL MeterFile$
+    END IF
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints one meter barcode label from keyboard input.
+'============================================================================
+SUB PrintOneMeterBcode
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+
+    COLOR 15, 0
+
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+  
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print One Meter Barcode Label", 5
+    Cputs "Press Enter to accept and print, esc to return to the main menu", 23
+
+    x$ = INKEY$
+  
+    MaxLen% = 17
+  
+    Serial$ = SPACE$(MaxLen%)
+  
+Back2Input:
+
+    COLOR 11, 0
+ 
+    RowOffSet% = 11
+    Column% = 10
+    PutXY RowOffSet%, Column%, "You may enter 17 characters.  Lower case letters will"
+    PutXY RowOffSet% + 1, Column%, "be converted to upper case."
+
+    PutXY RowOffSet% + 2, Column%, "Left and right arrows move the cursor without changing the"
+    PutXY RowOffSet% + 3, Column%, "character, Home returns to the start of the serial number,"
+    PutXY RowOffSet% + 4, Column%, "end to the end of the serial number.  Insert will insert a"
+    PutXY RowOffSet% + 5, Column%, "space at the cursor position, the last character in the"
+    PutXY RowOffSet% + 6, Column%, "serial number (if any) will be lost.  Delete will delete"
+    PutXY RowOffSet% + 7, Column%, "the character at the cusor position."
+
+    Cputs "The printer ignores leading spaces!", 21
+ 
+    COLOR 15, 4
+  
+    StringRow% = 8
+    Pointer% = 1
+    StartOfString% = 35
+
+    PutXY StringRow%, StartOfString%, Serial$
+    LOCATE StringRow%, StartOfString%, 1, 0, 7
+  
+    DO
+        DO
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF LEN(x$) = 2 THEN
+            LOCATE , , 0            ' Turn off the cursor
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71             ' Home key
+                    Pointer% = 1
+                CASE 75             ' Left arrow key
+                    IF Pointer% > 1 THEN
+                        Pointer% = Pointer% - 1
+                    ELSE
+                        Pointer% = MaxLen%
+                    END IF
+                CASE 77             ' Right arrow key
+                    IF Pointer% < MaxLen% THEN
+                        Pointer% = Pointer% + 1
+                    ELSE
+                        Pointer% = 1
+                    END IF
+                CASE 79             ' End key
+                    Pointer% = MaxLen%
+                CASE 82             ' Insert key
+                    SELECT CASE Pointer%
+                        CASE 1
+                            Serial$ = LEFT$(CHR$(32) + Serial$, MaxLen%)
+                        CASE 9
+                            Serial$ = LEFT$(Serial$, MaxLen% - 1) + CHR$(32)
+                        CASE ELSE
+                            Serial$ = LEFT$(LEFT$(Serial$, Pointer% - 1) + CHR$(32) + MID$(Serial$, Pointer%), MaxLen%)
+                    END SELECT
+                    PutXY StringRow%, StartOfString%, Serial$
+                CASE 83             ' Delete key
+                    IF Pointer% = MaxLen% THEN
+                        MID$(Serial$, MaxLen%, 1) = CHR$(32)
+                    ELSE
+                            Serial$ = LEFT$(LEFT$(Serial$, Pointer% - 1) + MID$(Serial$, Pointer% + 1) + CHR$(32), MaxLen%)
+                    END IF
+                    PutXY StringRow%, StartOfString%, Serial$
+            END SELECT
+        ELSE
+            SELECT CASE ASC(x$)
+                CASE 13, 27
+                CASE 32 TO 95
+                    MID$(Serial$, Pointer%, 1) = x$
+                    PutXY StringRow%, StartOfString% + Pointer% - 1, x$
+                    LOCATE , , 0
+                    IF Pointer% < MaxLen% THEN
+                        Pointer% = Pointer% + 1
+                    END IF
+                CASE ELSE
+            END SELECT
+        END IF
+        LOCATE StringRow%, StartOfString% + Pointer% - 1, 1, 0, 7
+  
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27), x$) > 0
+
+    IF x$ = CHR$(13) AND LTRIM$(RTRIM$(Serial$)) <> "" THEN
+      
+        LOCATE , , 0
+      
+        FOR Row% = StringRow% + 1 TO 21
+            COLOR 15, 0
+            Cputs SPACE$(72), Row%
+        NEXT
+      
+'   Check the string... This error checking will get better, probably with lookup tables
+
+        Barcode$ = LTRIM$(RTRIM$(Serial$))
+        Flag% = 0
+        FOR Count% = 1 TO LEN(Barcode$)
+            IF INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/-*", MID$(Barcode$, Count%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF LEN(Barcode$) <> MaxLen% OR Flag% = 1 THEN
+            Cputs "Barcode string unacceptable.", StringRow% + 8
+            Cputs "Enter to return and correct, Esc to exit", StringRow% + 11
+            DO
+                DO
+                    x$ = INKEY$
+                LOOP WHILE x$ = ""
+            LOOP UNTIL INSTR(CHR$(13) + CHR$(27), x$) > 0
+            IF x$ = CHR$(27) THEN
+                SCREEN , , 0, 0
+                EXIT SUB
+            END IF
+
+'   A GOTO to keep Dick O. happy.
+
+            GOTO Back2Input
+       
+        END IF
+
+'   Operator can select from 0 to 9 labels.  0 exits.
+      
+        Cputs "Number of labels to be printed (0 to 9)", 16
+      
+        x$ = INKEY$
+      
+        DO
+            DO
+                x$ = INKEY$
+            LOOP WHILE x$ = ""
+        LOOP UNTIL INSTR("0123456789", x$) > 0
+       
+        x% = VAL(x$)
+
+        IF x% > 0 THEN
+            Text$ = LEFT$(Barcode$, 3) + " " + MID$(Barcode$, 4, 9) + " " + RIGHT$(Barcode$, 5)
+            PrintABarCode Barcode$, Text$, x%
+        END IF
+        PrintEndOfJob
+
+    END IF
+
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print one serial number (or anything for that matter) label from keyboard
+'   input.
+'============================================================================
+SUB PrintOneSerialLabel
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+ 
+    COLOR 15, 0
+ 
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+   
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print One Serial Number Label", 5
+    Cputs "Press Enter to accept and print, esc to return to the main menu", 23
+
+   
+    COLOR 11, 0
+   
+    RowOffSet% = 11
+    Column% = 10
+    PutXY RowOffSet%, Column%, "You may enter up to 9 characters.  Lower case letters will"
+    PutXY RowOffSet% + 1, Column%, "be converted to upper case."
+
+    PutXY RowOffSet% + 2, Column%, "Left and right arrows move the cursor without changing the"
+    PutXY RowOffSet% + 3, Column%, "character, Home returns to the start of the serial number,"
+    PutXY RowOffSet% + 4, Column%, "end to the end of the serial number.  Insert will insert a"
+    PutXY RowOffSet% + 5, Column%, "space at the cursor position, the last character in the"
+    PutXY RowOffSet% + 6, Column%, "serial number (if any) will be lost.  Delete will delete"
+    PutXY RowOffSet% + 7, Column%, "the character at the cusor position."
+
+    Cputs "The printer ignores leading spaces!", 21
+   
+    x$ = INKEY$
+   
+    MaxLen% = 9
+   
+    Serial$ = SPACE$(MaxLen%)
+   
+    COLOR 15, 4
+   
+    StringRow% = 8
+    Pointer% = 1
+    StartOfString% = 35
+
+    PutXY StringRow%, StartOfString%, Serial$
+    LOCATE StringRow%, StartOfString%, 1, 0, 7
+   
+    DO
+        DO
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF LEN(x$) = 2 THEN
+            LOCATE , , 0            ' Turn off the cursor
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71             ' Home key
+                    Pointer% = 1
+                CASE 75             ' Left arrow key
+                    IF Pointer% > 1 THEN
+                        Pointer% = Pointer% - 1
+                    ELSE
+                        Pointer% = MaxLen%
+                    END IF
+                CASE 77             ' Right arrow key
+                    IF Pointer% < MaxLen% THEN
+                        Pointer% = Pointer% + 1
+                    ELSE
+                        Pointer% = 1
+                    END IF
+                CASE 79             ' End key
+                    Pointer% = MaxLen%
+                CASE 82             ' Insert key
+                    SELECT CASE Pointer%
+                        CASE 1
+                            Serial$ = LEFT$(CHR$(32) + Serial$, MaxLen%)
+                        CASE 9
+                            Serial$ = LEFT$(Serial$, MaxLen% - 1) + CHR$(32)
+                        CASE ELSE
+                            Serial$ = LEFT$(LEFT$(Serial$, Pointer% - 1) + CHR$(32) + MID$(Serial$, Pointer%), MaxLen%)
+                    END SELECT
+                    PutXY StringRow%, StartOfString%, Serial$
+                CASE 83             ' Delete key
+                    IF Pointer% = MaxLen% THEN
+                        MID$(Serial$, MaxLen%, 1) = CHR$(32)
+                    ELSE
+                            Serial$ = LEFT$(LEFT$(Serial$, Pointer% - 1) + MID$(Serial$, Pointer% + 1) + CHR$(32), MaxLen%)
+                    END IF
+                    PutXY StringRow%, StartOfString%, Serial$
+            END SELECT
+        ELSE
+            SELECT CASE ASC(x$)
+                CASE 13, 27
+                CASE 32 TO 95
+                    MID$(Serial$, Pointer%, 1) = x$
+                    PutXY StringRow%, StartOfString% + Pointer% - 1, x$
+                    LOCATE , , 0
+                    IF Pointer% < MaxLen% THEN
+                        Pointer% = Pointer% + 1
+                    END IF
+                CASE ELSE
+            END SELECT
+        END IF
+        LOCATE StringRow%, StartOfString% + Pointer% - 1, 1, 0, 7
+   
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27), x$) > 0
+
+    IF x$ = CHR$(13) AND LTRIM$(RTRIM$(Serial$)) <> "" THEN
+       
+        LOCATE , , 0
+       
+        FOR Row% = StringRow% + 1 TO 21
+            COLOR 15, 0
+            Cputs SPACE$(72), Row%
+        NEXT
+       
+'   Operator can select from 0 to 9 labels.  0 exits.
+       
+        Cputs "Number of labels to be printed (0 to 9)", 16
+       
+        x$ = INKEY$
+       
+        DO
+            DO
+                x$ = INKEY$
+            LOOP WHILE x$ = ""
+        LOOP UNTIL INSTR("0123456789", x$) > 0
+        
+        x% = VAL(x$)
+
+        IF x% > 0 THEN
+            PrintATextLabel Serial$, x%     ' If we're supposed to print, then print
+            PrintEndOfJob
+        END IF
+    END IF
+
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints one meter barcode label from keyboard input.
+'============================================================================
+SUB PrintOneTransfBcode
+'----------------------------------------------------------------------------
+    SCREEN , , 1, 1
+
+    COLOR 15, 0
+
+    CLS
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+ 
+    DrawMenuBox 1, 24, 6, 22, 78
+
+'   Print Menu Text
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print One Transformer Barcode Label", 5
+    Cputs "Press Enter to accept and print, esc to return to the main menu", 23
+
+    x$ = INKEY$
+ 
+    MaxLen% = 17
+ 
+    Serial$ = SPACE$(MaxLen%)
+ 
+Back2Inp:
+
+    COLOR 11, 0
+
+    RowOffSet% = 11
+    Column% = 10
+    PutXY RowOffSet%, Column%, "You may enter 17 characters.  Lower case letters will"
+    PutXY RowOffSet% + 1, Column%, "be converted to upper case."
+
+    PutXY RowOffSet% + 2, Column%, "Left and right arrows move the cursor without changing the"
+    PutXY RowOffSet% + 3, Column%, "character, Home returns to the start of the serial number,"
+    PutXY RowOffSet% + 4, Column%, "end to the end of the serial number.  Insert will insert a"
+    PutXY RowOffSet% + 5, Column%, "space at the cursor position, the last character in the"
+    PutXY RowOffSet% + 6, Column%, "serial number (if any) will be lost.  Delete will delete"
+    PutXY RowOffSet% + 7, Column%, "the character at the cusor position."
+
+    Cputs "The printer ignores leading spaces!", 21
+
+    COLOR 15, 4
+ 
+    StringRow% = 8
+    Pointer% = 1
+    StartOfString% = 35
+
+    PutXY StringRow%, StartOfString%, Serial$
+    LOCATE StringRow%, StartOfString%, 1, 0, 7
+ 
+    DO
+        DO
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF LEN(x$) = 2 THEN
+            LOCATE , , 0            ' Turn off the cursor
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71             ' Home key
+                    Pointer% = 1
+                CASE 75             ' Left arrow key
+                    IF Pointer% > 1 THEN
+                        Pointer% = Pointer% - 1
+                    ELSE
+                        Pointer% = MaxLen%
+                    END IF
+                CASE 77             ' Right arrow key
+                    IF Pointer% < MaxLen% THEN
+                        Pointer% = Pointer% + 1
+                    ELSE
+                        Pointer% = 1
+                    END IF
+                CASE 79             ' End key
+                    Pointer% = MaxLen%
+                CASE 82             ' Insert key
+                    SELECT CASE Pointer%
+                        CASE 1
+                            Serial$ = LEFT$(CHR$(32) + Serial$, MaxLen%)
+                        CASE 9
+                            Serial$ = LEFT$(Serial$, MaxLen% - 1) + CHR$(32)
+                        CASE ELSE
+                            Serial$ = LEFT$(LEFT$(Serial$, Pointer% - 1) + CHR$(32) + MID$(Serial$, Pointer%), MaxLen%)
+                    END SELECT
+                    PutXY StringRow%, StartOfString%, Serial$
+                CASE 83             ' Delete key
+                    IF Pointer% = MaxLen% THEN
+                        MID$(Serial$, MaxLen%, 1) = CHR$(32)
+                    ELSE
+                            Serial$ = LEFT$(LEFT$(Serial$, Pointer% - 1) + MID$(Serial$, Pointer% + 1) + CHR$(32), MaxLen%)
+                    END IF
+                    PutXY StringRow%, StartOfString%, Serial$
+            END SELECT
+        ELSE
+            SELECT CASE ASC(x$)
+                CASE 13, 27
+                CASE 32 TO 95
+                    MID$(Serial$, Pointer%, 1) = x$
+                    PutXY StringRow%, StartOfString% + Pointer% - 1, x$
+                    LOCATE , , 0
+                    IF Pointer% < MaxLen% THEN
+                        Pointer% = Pointer% + 1
+                    END IF
+                CASE ELSE
+            END SELECT
+        END IF
+        LOCATE StringRow%, StartOfString% + Pointer% - 1, 1, 0, 7
+ 
+    LOOP UNTIL INSTR(CHR$(13) + CHR$(27), x$) > 0
+
+    IF x$ = CHR$(13) AND LTRIM$(RTRIM$(Serial$)) <> "" THEN
+     
+        LOCATE , , 0
+     
+        FOR Row% = StringRow% + 1 TO 21
+            COLOR 15, 0
+            Cputs SPACE$(72), Row%
+        NEXT
+     
+'   Check the string... This error checking will get better, probably with lookup tables
+
+        Barcode$ = LTRIM$(RTRIM$(Serial$))
+        Flag% = 0
+        FOR Count% = 1 TO LEN(Barcode$)
+            IF INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/-*", MID$(Barcode$, Count%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF LEN(Barcode$) <> MaxLen% OR Flag% = 1 THEN
+            Cputs "Barcode string unacceptable.", StringRow% + 8
+            Cputs "Enter to return and correct, Esc to exit", StringRow% + 11
+            DO
+                DO
+                    x$ = INKEY$
+                LOOP WHILE x$ = ""
+            LOOP UNTIL INSTR(CHR$(13) + CHR$(27), x$) > 0
+            IF x$ = CHR$(27) THEN
+                SCREEN , , 0, 0
+                EXIT SUB
+            END IF
+
+'   A GOTO to keep Dick O. happy.
+
+            GOTO Back2Inp
+
+        END IF
+
+'   Operator can select from 0 to 9 labels.  0 exits.
+     
+        Cputs "Number of labels to be printed (0 to 9)", 16
+     
+        x$ = INKEY$
+     
+        DO
+            DO
+                x$ = INKEY$
+            LOOP WHILE x$ = ""
+        LOOP UNTIL INSTR("0123456789", x$) > 0
+      
+        x% = VAL(x$)
+
+        IF x% > 0 THEN
+            Text$ = LEFT$(Barcode$, 1) + " " + MID$(Barcode$, 2, 11) + " " + RIGHT$(Barcode$, 5)
+            PrintABarCode Barcode$, Text$, x%
+        END IF
+        PrintEndOfJob
+
+    END IF
+
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Routine to print serial number labels from disk file.
+'============================================================================
+SUB PrintSerialNumbers
+'----------------------------------------------------------------------------
+    CLS
+
+    InFile% = FREEFILE
+
+    OPEN SerialFile$ FOR BINARY AS #InFile%
+
+    IF LOF(InFile%) < 17 THEN
+        CLOSE #InFile%
+        Cputs "No data file found", 10
+        Junk$ = Get1Key$(CHR$(13) + CHR$(32), "Press Enter to return to main menu")
+        EXIT SUB
+    END IF
+
+    CLOSE #InFile%
+   
+    AppendEOF SerialFile$
+
+    COLOR 15, 0
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+  
+    DrawMenuBox 1, 24, 6, 20, 78
+
+'   Print Menu Heading
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Transformer Barcode Labels from disk file", 5
+
+'   Print menu selection text
+
+    RowOffSet% = 10
+    Column% = 25
+    Sel% = 1
+
+    PutXY RowOffSet% + 1, Column%, "1 label per entry"
+    PutXY RowOffSet% + 2, Column%, "2 labels per entry"
+    PutXY RowOffSet% + 3, Column%, "3 labels per entry"
+    PutXY RowOffSet% + 4, Column%, "4 or Esc - Exit"
+
+    COLOR 11, 0
+
+    PutXY 2, 77 - LEN(Version$), Version$
+
+    COLOR 15, 0
+
+    PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+    Cputs SPACE$(60), 22
+    Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF x$ = CHR$(27) THEN
+            x$ = "4"
+        END IF
+        IF x$ = CHR$(13) THEN
+            x$ = LTRIM$(RTRIM$(STR$(Sel%)))
+        END IF
+        IF LEN(x$) = 2 THEN
+            PutXY RowOffSet% + Sel%, Column% - 4, SPACE$(3)
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71                 ' Home
+                    Sel% = 1
+                CASE 72                 ' Up arrow
+                    Sel% = Sel% - 1
+                    IF Sel% < 1 THEN
+                        Sel% = 4
+                    END IF
+                CASE 79                 ' End
+                    Sel% = 4
+                CASE 80                 ' Down arrow
+                    Sel% = Sel% + 1
+                    IF Sel% > 4 THEN
+                        Sel% = 1
+                    END IF
+            END SELECT
+            COLOR 15, 0
+            PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+            x$ = "NO"
+            COLOR 15, 0
+            Cputs SPACE$(60), 22
+            Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+        END IF
+    LOOP WHILE INSTR("1234", x$) = 0
+
+    SELECT CASE x$
+        CASE "1"
+            NumberOfLabels% = 1
+        CASE "2"
+            NumberOfLabels% = 2
+        CASE "3"
+            NumberOfLabels% = 3
+        CASE "4"
+            EXIT SUB
+    END SELECT
+
+'   Ok, we're supposed to print labels.... Let's do it.
+
+    CLS
+
+    InFile% = FREEFILE
+ 
+    OPEN SerialFile$ FOR INPUT AS #InFile%
+
+    DO
+        LINE INPUT #InFile%, Barcode$
+        Barcode$ = UCASE$(LTRIM$(RTRIM$(Barcode$)))
+        IF LEN(Barcode$) > 9 THEN
+            PRINT "Problem with this entry - "; Barcode$
+            Junk$ = Get1Key$(CHR$(13) + CHR$(32), "Press Enter to continue")
+        ELSE
+            PrintATextLabel Barcode$, NumberOfLabels%
+        END IF
+    LOOP UNTIL EOF(InFile%)
+   
+    CLOSE
+
+    PrintEndOfJob
+
+'   Delete the data file?
+
+    CLS
+
+    Cputs "Delete Serial Number Barcodes data file", 10
+
+    x$ = Get1Key$("YN", "(Y/N)")
+
+    IF x$ = "Y" THEN
+        KILL SerialFile$
+    END IF
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints transformer barcode from ascii file.
+'============================================================================
+SUB PrintTransBarcode
+'----------------------------------------------------------------------------
+    CLS
+ 
+    InFile% = FREEFILE
+ 
+    OPEN TransfFile$ FOR BINARY AS #InFile%
+
+    IF LOF(InFile%) < 17 THEN
+        CLOSE #InFile%
+        Cputs "No data file found", 10
+        Junk$ = Get1Key$(CHR$(13) + CHR$(32), "Press Enter to return to main menu")
+        EXIT SUB
+    END IF
+
+    CLOSE #InFile%
+
+    AppendEOF TransfFile$
+
+    COLOR 15, 0
+
+'   Clear Status Line
+
+    LOCATE 25, 1, 0
+
+    PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+   
+    DrawMenuBox 1, 24, 6, 20, 78
+
+'   Print Menu Heading
+
+    COLOR 14, 0
+    Cputs "American Electric Power", 2
+    Cputs "Canton Meter Laboratory", 3
+    Cputs "SATO Printer Label Print Utility", 4
+    Cputs "Print Transformer Barcode Labels from disk file", 5
+
+'   Print menu selection text
+
+    RowOffSet% = 10
+    Column% = 25
+    Sel% = 1
+
+    PutXY RowOffSet% + 1, Column%, "1 label per Transformer"
+    PutXY RowOffSet% + 2, Column%, "2 labels per Transformer"
+    PutXY RowOffSet% + 3, Column%, "3 labels per Transformer"
+    PutXY RowOffSet% + 4, Column%, "4 or Esc - Exit"
+
+    COLOR 11, 0
+
+    PutXY 2, 77 - LEN(Version$), Version$
+ 
+    COLOR 15, 0
+ 
+    PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+    Cputs SPACE$(60), 22
+    Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+ 
+    DO
+        DO
+            COLOR 11, 0
+            PutXY 5, 3, DATE$
+            PutXY 5, 69, TIME$
+            PutXY 2, 3, DayOfWeek$(DATE$)
+            LOCATE , , 0
+            x$ = UCASE$(INKEY$)
+        LOOP WHILE x$ = ""
+        IF x$ = CHR$(27) THEN
+            x$ = "4"
+        END IF
+        IF x$ = CHR$(13) THEN
+            x$ = LTRIM$(RTRIM$(STR$(Sel%)))
+        END IF
+        IF LEN(x$) = 2 THEN
+            PutXY RowOffSet% + Sel%, Column% - 4, SPACE$(3)
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 71                 ' Home
+                    Sel% = 1
+                CASE 72                 ' Up arrow
+                    Sel% = Sel% - 1
+                    IF Sel% < 1 THEN
+                        Sel% = 4
+                    END IF
+                CASE 79                 ' End
+                    Sel% = 4
+                CASE 80                 ' Down arrow
+                    Sel% = Sel% + 1
+                    IF Sel% > 4 THEN
+                        Sel% = 1
+                    END IF
+            END SELECT
+            COLOR 15, 0
+            PutXY RowOffSet% + Sel%, Column% - 4, Pointer$
+            x$ = "NO"
+            COLOR 15, 0
+            Cputs SPACE$(60), 22
+            Cputs "Option number?  (" + LTRIM$(STR$(Sel%)) + ")", 22
+        END IF
+    LOOP WHILE INSTR("1234", x$) = 0
+
+    SELECT CASE x$
+        CASE "1"
+            NumberOfLabels% = 1
+        CASE "2"
+            NumberOfLabels% = 2
+        CASE "3"
+            NumberOfLabels% = 3
+        CASE "4"
+            EXIT SUB
+    END SELECT
+
+'   Ok, we're supposed to print labels.... Let's get with the program
+
+    CLS
+ 
+    InFile% = FREEFILE
+  
+    OPEN TransfFile$ FOR INPUT AS #InFile%
+
+    DO
+        LINE INPUT #InFile%, Barcode$
+        Barcode$ = UCASE$(LTRIM$(RTRIM$(Barcode$)))
+        IF LEN(Barcode$) <> 17 THEN
+            PRINT "Problem with this entry - "; Barcode$
+            Junk$ = Get1Key$(CHR$(13) + CHR$(32), "Press Enter to continue")
+        ELSE
+            Text$ = LEFT$(Barcode$, 1) + " " + MID$(Barcode$, 2, 11) + " " + RIGHT$(Barcode$, 5)
+            PrintABarCode Barcode$, Text$, NumberOfLabels%
+        END IF
+    LOOP UNTIL EOF(InFile%)
+   
+    CLOSE
+  
+    PrintEndOfJob
+
+'   Delete the data file?
+
+    CLS
+
+    Cputs "Delete Transformer Barcodes data file", 10
+
+    x$ = Get1Key$("YN", "(Y/N)")
+
+    IF x$ = "Y" THEN
+        KILL TransfFile$
+    END IF
+
+'****************************************************************************
+END SUB
+

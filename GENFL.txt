@@ -1,0 +1,59 @@
+'   $title:'GENFL - Copy data for Analysis/Tracking Use'
+'   version 0.20
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Laboratory
+'   Canton, OH
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   June, 1993
+'       First release
+'   March, 1994
+'       Added file output for STS's use.  This one really isn't totally
+'       necessary, but will speed up STS updates in the morning.
+'============================================================================
+'   Read .ini file
+'----------------------------------------------------------------------------
+    Programmer$ = "K.W.Kroninger"
+    Location$ = "Ohio Power Company, Protection and Measurements Electronics Lab"
+    IniFile% = FREEFILE
+    OPEN "GENFL.INI" FOR INPUT AS #IniFile%
+    LINE INPUT #IniFile%, DataSrc$
+    LINE INPUT #IniFile%, DataDest$
+    LINE INPUT #IniFile%, STS$
+    CLOSE
+  
+'   No leading/trailing spaces need apply
+
+    DataSrc$ = LTRIM$(RTRIM$(DataSrc$))
+    DataDest$ = LTRIM$(RTRIM$(DataDest$))
+
+'   Open the data files
+
+    SrcFile% = FREEFILE
+    OPEN DataSrc$ FOR INPUT AS #SrcFile%
+
+    DestFile% = FREEFILE
+    OPEN DataDest$ FOR APPEND AS #DestFile%
+
+    STS% = FREEFILE
+    OPEN STS$ FOR APPEND AS #STS%
+
+'   Now copy the data
+
+    DO
+        LINE INPUT #SrcFile%, Work$
+        Work$ = LTRIM$(RTRIM$(Work$))
+        IF LEN(Work$) > 50 THEN
+            PRINT #DestFile%, Work$
+            PRINT #STS%, Work$
+            PRINT MID$(Work$, 32, 2); "  "; MID$(Work$, 34, 5); " "; MID$(Work$, 39, 9); " "; MID$(Work$, 123, 8)
+        END IF
+    LOOP UNTIL EOF(SrcFile%)
+    CLOSE
+'****************************************************************************
+'   End of GENFL.BAS
+'****************************************************************************
+
+

@@ -1,0 +1,24 @@
+'   $TITLE: 'ADDEOF - Append explicit EOF code to text file.'
+'   Version 1.00
+'   K. W. Kroninger
+'   Ohio Power Company
+'============================================================================
+'   History (last 12 months only)
+'----------------------------------------------------------------------------
+'   November, 1992
+'       First release
+'============================================================================
+	FileName$ = LTRIM$(RTRIM$(COMMAND$))
+	IF FileName$ = "" THEN
+		END
+	END IF
+	Buffer% = FREEFILE
+	OPEN FileName$ FOR BINARY AS #Buffer%
+	SEEK #Buffer%, LOF(Buffer%) + 1
+	Eof$ = CHR$(26)
+	PUT #Buffer%, , Eof$
+	CLOSE #Buffer%
+'****************************************************************************
+'   End of AddEof.Bas
+'****************************************************************************
+

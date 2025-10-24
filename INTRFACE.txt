@@ -1,0 +1,1588 @@
+'   $title:'Interface.Bas'
+'   Version 6.20
+'============================================================================
+'   | K. W. Kroninger
+'   | Ohio Power Company
+'   | Protection and Measurements Electronics Lab
+'============================================================================
+'   This is the program that converts from MRDES II format to MDS interface
+'   format.
+'============================================================================
+'   Program history
+'----------------------------------------------------------------------------
+'   October, 1993
+'       Mods to handle MDS 2 - will still work with MDS 1
+'       Mds1/Mds2 indicator is in DATAFILE
+'   January, 1994
+'       Touchups for MDS 2 operation
+'       Hack for CSP operation.  Not the way it should be, but will work
+'       until we have the time to do it the way it should be, or forever, for
+'       that matter.
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   User record type declarations
+'----------------------------------------------------------------------------
+'   IntRec is used to define records for decode arrays which define where in
+'   a MRDES II or TRDES record the information will be found, and where in
+'   the interface record the information should be stored.
+    TYPE IntRec
+        IntPos AS INTEGER       ' Interface record datum position
+        IntLen AS INTEGER       ' Interface record datum length
+        Adec AS STRING * 1      ' Alpha or decimal places
+        MrsPos AS INTEGER       ' MRDES II record datum position
+        MrsLen AS INTEGER       ' MRDES II record datum length
+    END TYPE
+'----------------------------------------------------------------------------
+'   Information and housekeeping record.  Number of records in data file,
+'   process flag and create, edit and process dates.
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+        Process AS STRING * 1
+        Create AS STRING * 10
+        EditDate AS STRING * 10
+        ProcDate AS STRING * 10
+    END TYPE
+'----------------------------------------------------------------------------
+'   MRDES II data record access
+    TYPE DataRecord
+        Buffer AS STRING * 500
+    END TYPE
+'----------------------------------------------------------------------------
+'   Define the type needed for INTERRUPT
+'   This one does not handle the segment registers.
+    TYPE RegType
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+    END TYPE
+'============================================================================
+'   Procedure Declarations
+'----------------------------------------------------------------------------
+DECLARE SUB AppendEOF (FileName$)
+DECLARE SUB AreaCode (Work$, Buffer$, Position%, Length%, OffSet%, Area$)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB INTERRUPT (IntNum AS INTEGER, InReg AS RegType, OutReg AS RegType)
+DECLARE SUB MarkMRSFile ()
+DECLARE FUNCTION Mrdes% ()
+DECLARE FUNCTION NetFlag$ (FlagNumber%, Funct%, ReqValue$, NewValue$, Drive$)
+DECLARE SUB PrintHeader ()
+DECLARE SUB ProcBattChk (Buffer$)
+DECLARE SUB ProcHistory (Buffer$)
+DECLARE SUB ProcPhyInv (Buffer$)
+DECLARE SUB ProcStatChg (Buffer$)
+DECLARE SUB ProcTest (Buffer$)
+DECLARE SUB ProcTestHist (Buffer$)
+DECLARE SUB ProcTransfer (Buffer$)
+DECLARE SUB ProgRpt (Value$, RecType$, Code%, Serial%, Mfr%, Area%, Dt%, Work() AS ANY)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadaScreen (DefPath$, FileName$, Work() AS ANY, Recs%)
+DECLARE SUB ReadDefFiles ()
+DECLARE SUB Report ()
+DECLARE FUNCTION RightSet$ (Value$, TotalChar%, Dec%)
+DECLARE FUNCTION TestDesc$ (Work$)
+DECLARE FUNCTION WriteHeader% ()
+DECLARE SUB WriteRecord (Record$)
+'============================================================================
+'   Array dimension statements
+'----------------------------------------------------------------------------
+'   This counter array totals the number of each type of record in the output
+'   file.
+    DIM SHARED Count&(7), InRegs AS RegType, OutRegs AS RegType
+'----------------------------------------------------------------------------
+'   These arrays of records are used in the conversion process.  Each record
+'   instructs INTRFACE how to deal with a specific string in the GSL's
+'   internal format and the AEP interface MRDES/MDS interface file format.
+    DIM SHARED Test(1 TO 80) AS IntRec
+    DIM SHARED TestHist(1 TO 80) AS IntRec
+    DIM SHARED PhyInv(1 TO 80) AS IntRec
+    DIM SHARED History(1 TO 80) AS IntRec
+    DIM SHARED Transfer(1 TO 80) AS IntRec
+    DIM SHARED StatChg(1 TO 80) AS IntRec
+    DIM SHARED Battchk(1 TO 80) AS IntRec
+'----------------------------------------------------------------------------
+'   These global integers are the number of records in each record array.
+    DIM SHARED Battery%, ToPrt%, Hstry%, PhInv%, Status%
+    DIM SHARED Records%, Trnsfr%, Tst%, TstHst%
+'----------------------------------------------------------------------------
+'   The global strings are used for record processing.
+'   Company$ -- Operating company AEP Company Code
+'   DataFile$ - Incoming data file drive/path
+'   Seal$ ----- Seal identification
+'   State$ ---- Postal State Code
+    DIM SHARED Company$, Count$, DataFile$, Seal$, State$, Count%
+    DIM SHARED WorkProdFile$
+'----------------------------------------------------------------------------
+'   File access record types
+    DIM SHARED Info AS InfoRecord, DataRec AS DataRecord
+'============================================================================
+'   MDS 1/MDS 2 flag
+'----------------------------------------------------------------------------
+    DIM SHARED Flag%, Mds2Flag%
+    CONST Magic% = 500
+    Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   Program begins
+'----------------------------------------------------------------------------
+'   Version information only is obtained by calling the program with the
+'   command line: INTRFACE V
+'   Case doesn't matter.
+
+    IF LEFT$(UCASE$(LTRIM$(RTRIM$(COMMAND$))), 1) = "V" THEN
+        PRINT "MRDES II/MDS Interface Record Utility - Version 6.20"
+        END
+    END IF
+
+'   Check for printer output on command line
+
+    IF INSTR(UCASE$(COMMAND$), "PRINT") > 0 THEN
+        ToPrt% = 1
+    ELSE
+        ToPrt% = 0
+    END IF
+   
+'   Check for network problem
+
+    ON ERROR GOTO NetProblem
+
+'---------------------------------------------------------------------------
+
+    IF MID$(LTRIM$(DataPath$), 2, 1) = ":" THEN
+        Drive$ = LEFT$(LTRIM$(DataPath$), 1)
+    ELSE
+        Drive$ = ""
+    END IF
+
+ChekFile:
+
+    Result$ = NetFlag$(1, 2, "0", "3", Drive$)
+
+    IF LEN(Result$) <> 1 THEN
+        CLS
+        Cputs "Data file in use by another machine", 6
+        Cputs "Press R to retry, or E to exit", 12
+        x& = TIMER + 60
+        Cputs SPACE$(70), 25
+        Cputs "(Enter = E, Esc = R)", 25
+        DO
+            DO
+                x$ = UCASE$(INKEY$)
+            LOOP WHILE x$ = "" AND x& > TIMER
+
+            IF x$ = CHR$(27) THEN
+                x$ = "E"
+            END IF
+            IF x$ = CHR$(13) THEN
+                x$ = "R"
+            END IF
+        LOOP UNTIL INSTR("ER", x$) > 0 OR x& < TIMER
+
+        IF x$ = "" THEN                 ' No input. Split
+            END
+        END IF
+       
+        IF x$ = "E" OR x$ = CHR$(27) THEN
+            END
+        ELSE
+            CLS
+            x& = TIMER + 2
+            DO
+            LOOP WHILE TIMER < x&
+            GOTO ChekFile
+        END IF
+    END IF
+  
+'----------------------------------------------------------------------------
+'   Check to see if process is allowed.  Allow processing only if the MRDES II
+'   process file exists and has not been processed.
+
+    Records% = Mrdes%
+   
+    IF Records% < 1 THEN
+        CLOSE
+        CLS
+        IF Records% = 0 THEN
+            Cputs "No Records to process.", 10
+            Cputs "(Program will exit automatically in 10 seconds)", 20
+        ELSE
+            Cputs "File has been processed.", 10
+            Cputs "(Program will exit automatically in 20 seconds)", 20
+        END IF
+        Cputs "Press ENTER to exit.", 15
+        x& = TIMER + 10 - Records% * 10
+        DO
+            x$ = INKEY$
+        LOOP UNTIL x& < TIMER OR x$ = CHR$(13)
+        GOTO Split
+    END IF
+'============================================================================
+'   OK, it's now agreed that we have a file, and it hasn't been processed.
+'   Get a bit more information, then do the deed.
+'----------------------------------------------------------------------------
+    CLS
+
+'   Read data definition files
+
+    Flag% = 0
+    ReadDefFiles
+    IF Flag% = 1 THEN
+        GOTO Split
+    END IF
+
+'   Call function to check for the presence of an MRDES II interface file and
+'   initialize one if none is found.  If the interface file exists, offer the
+'   operator the chance to cancel the process.
+
+    IF WriteHeader% = 1 THEN
+        GOTO Split
+    END IF
+
+'   Interface file is initialized, MRDES II file has records and has not been
+'   processed.  Begin processing.
+   
+    PrintHeader
+
+    FOR x% = 1 TO Records%
+        Df% = FREEFILE
+        OPEN DataFile$ FOR RANDOM AS #Df% LEN = LEN(DataRec)
+        GET #Df%, x% + 1, DataRec
+        Buffer$ = DataRec.Buffer
+        CLOSE #Df%
+      
+'   Get record type
+
+        Tran% = VAL(LEFT$(Buffer$, 1))
+      
+'   Record count for progress report
+
+        x$ = RIGHT$(SPACE$(4) + STR$(x%), 4)
+        Records$ = RIGHT$(SPACE$(4) + STR$(Records%), 4)
+        Count$ = x$ + " of " + Records$
+
+'   Process the current record.
+
+        SELECT CASE Tran%
+            CASE 1
+                ProcTest Buffer$
+            CASE 2
+                ProcTestHist Buffer$
+            CASE 3
+                ProcPhyInv Buffer$
+            CASE 4
+                ProcHistory Buffer$
+            CASE 5
+                ProcTransfer Buffer$
+            CASE 6
+                ProcStatChg Buffer$
+            CASE 7
+                ProcBattChk Buffer$
+        END SELECT
+
+    NEXT
+
+'   If we're sending data to the printer, output a form feed.
+
+    IF ToPrt% = 1 THEN
+        InRegs.Ax = &H500               ' Char to ptr service
+        InRegs.Dx = &HC                 ' Form feed
+        INTERRUPT &H21, InRegs, OutRegs ' YO! DOS!
+    END IF
+
+'   Mark the input file as having been processed.  This subprogram changes
+'   the Process file's processed data flag from a U to a P, and adds the
+'   process date.
+
+    MarkMRSFile
+
+'   Append EOF marker as the mainframe needs it.
+
+    AppendEOF "MRS2MDS"
+
+    Report
+
+'   Leave it on the screen a bit
+
+    x$ = INKEY$
+    x& = TIMER + 20
+    DO
+        x$ = INKEY$
+    LOOP UNTIL x& < TIMER OR x$ = CHR$(13)
+
+Split:
+'---------------------------------------------------------------------------
+'   Release the file locks
+
+    IF MID$(LTRIM$(DataPath$), 2, 1) = ":" THEN
+        Drive$ = LEFT$(LTRIM$(DataPath$), 1)
+    ELSE
+        Drive$ = ""
+    END IF
+
+    Result$ = NetFlag$(1, 2, "3", "0", Drive$)
+
+    END
+
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+    IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+    ELSE
+        x& = TIMER + 10
+        DO
+        Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+    END IF
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of IntrFace.Bas main module
+'****************************************************************************
+
+'****************************************************************************
+'   Does conversion from MRDES II area code to MDS area code, division
+'   and storeroom.
+'============================================================================
+SUB AreaCode (Work$, Buffer$, Position%, Length%, OffSet%, a$)
+'----------------------------------------------------------------------------
+    Area$ = MID$(Buffer$, Position%, Length%)
+
+'   Hack for OP/CSP operation... This ain't right, but it should work.
+ 
+    IF LEN(Area$) = 3 THEN
+        Area$ = MID$(Buffer$, Position% - 1, 1) + Area$
+    END IF
+   
+    a$ = Area$
+
+'   Columbus Southern Power
+
+    IF LEFT$(Area$, 1) = "0" THEN
+        SELECT CASE MID$(Area$, 2, 1)
+            CASE "0"
+                Area$ = "00009931"
+            CASE "1"
+                Area$ = "01177002"
+            CASE "2"
+                Area$ = "02270011"
+            CASE "3"
+                Area$ = "03380012"
+        END SELECT
+        MID$(Work$, OffSet% + 6, 10) = Area$
+        EXIT SUB
+    END IF
+
+
+'   Indiana Michigan Power
+
+    IF LEFT$(Area$, 1) = "4" OR LEFT$(Area$, 1) = "5" THEN
+        SELECT CASE Area$
+            CASE "4110"         ' South Bend
+                Area$ = "01010011"
+            CASE "4120"         ' Elkhart
+                Area$ = "01020012"
+            CASE "4310"         ' Ft. Wayne
+                Area$ = "03010031"
+            CASE "4320"         ' Avilla
+                Area$ = "03020032"
+            CASE "4330"         ' Decatur
+                Area$ = "03030033"
+            CASE "4410"         ' Marion
+                Area$ = "04010053"
+            CASE "4420"         ' Elwood
+                Area$ = "04020054"
+            CASE "4430"         ' Hartford City
+                Area$ = "04030055"
+            CASE "4510"         ' Muncie
+                Area$ = "05010051"
+            CASE "4520"         ' Winchester
+                Area$ = "05020052"
+            CASE "4610"         ' FW Baer Field - Conversion
+                Area$ = "06010903"
+            CASE "4810"         ' St Joe
+                Area$ = "08010081"
+            CASE "4820"         ' Buchanan
+                Area$ = "08020082"
+            CASE "4830"         ' Three Rivers (MPCO)
+                Area$ = "08030083"
+            CASE "4840"         ' Lawton Area (MPCO)
+                Area$ = "08040084"
+            CASE "5830"         ' Three Rivers (CONV)
+                Area$ = "08030083"
+        END SELECT
+        EXIT SUB
+    END IF
+
+'   If preference is for company ID on the entry/edit screen....
+
+    IF LEN(Area$) > 3 THEN
+        Area$ = RIGHT$(Area$, 3)
+    END IF
+
+    MID$(Work$, OffSet% + 6, 2) = "0" + LEFT$(Area$, 1)
+   
+    IF LEFT$(Area$, 1) = "0" THEN
+        MID$(Work$, OffSet% + 8, 3) = "009"
+        MID$(Work$, OffSet% + 11, 3) = "931"
+    ELSE
+        MID$(Work$, OffSet% + 8, 3) = "0" + RIGHT$(Area$, 2)
+        MID$(Work$, OffSet% + 11, 3) = "0" + LEFT$(Area$, 2)
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Marks process file as having been processed.
+'============================================================================
+SUB MarkMRSFile
+'----------------------------------------------------------------------------
+    Mrs% = FREEFILE
+    OPEN DataFile$ FOR RANDOM AS #Mrs% LEN = LEN(DataRec)
+    GET #Mrs%, 1, Info
+  
+'   Set process flag to P, and process date to current date.
+
+    Info.Process = "P"
+    Info.ProcDate = DATE$
+    PUT #Mrs%, 1, Info
+    CLOSE #Mrs%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Opens and checks MRDES file to see if it exists and can be processed.
+'   Returns 0 if file doesn't exist, number of records if file exists and has
+'   not been processed, -1 if file has been processed.
+'============================================================================
+FUNCTION Mrdes%
+'----------------------------------------------------------------------------
+
+'   First, find the file path using MRDES II information file.
+
+    Mrs% = FREEFILE
+    OPEN "DATAFILE" FOR INPUT AS #Mrs%
+
+'   Skip over what we don't need, input what we do.
+
+    FOR x% = 1 TO 5
+        LINE INPUT #Mrs%, DataFile$
+    NEXT
+   
+    CLOSE #Mrs%
+
+'   In case someone didn't do all they should in DATAFILE...
+
+    IF RIGHT$(DataFile$, 1) <> "\" THEN
+        DataFile$ = DataFile$ + "\"
+    END IF
+
+    DataFile$ = DataFile$ + "MRDES.DAT"
+
+    OPEN DataFile$ FOR RANDOM AS #Mrs% LEN = LEN(DataRec)
+    GET #Mrs%, 1, Info
+    CLOSE #Mrs%
+
+'   If there's no records to process, close and delete the data file, then
+'   report back to the main program.
+
+    IF Info.NumberOfRecords = 0 THEN
+        Mrdes% = 0
+        KILL DataFile$
+    EXIT FUNCTION
+    END IF
+
+'   Woops.  Trouble in paradise.  File is marked as processed.  Report it and
+'   exit.  Do not allow file marked processed to be reprocessed without the
+'   operator taking definite action.
+
+    IF Info.Process = "P" THEN
+        Mrdes% = -1
+        EXIT FUNCTION
+    END IF
+   
+    Mrdes% = Info.NumberOfRecords
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Clears screen or sends form feed as directed by ToPrt%,
+'   then prints header.
+'============================================================================
+SUB PrintHeader
+'----------------------------------------------------------------------------
+    IF ToPrt% = 0 THEN
+        CLS
+        PRINT TAB(6); "Rec of Recs Rec Type Code   Serial     Mf  Area  Rec Date"
+    ELSE
+        InRegs.Ax = &H500                   ' Char to ptr service
+        InRegs.Dx = &HC                     ' Form feed
+        INTERRUPT &H21, InRegs, OutRegs     ' YO! DOS!
+        LPRINT TAB(6); "Rec of Recs Rec Type Code   Serial     Mf  Area  Rec Date"
+    END IF
+    Count% = 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process battery check year records
+'============================================================================
+SUB ProcBattChk (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "7"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Battery%
+        IF Battchk(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, Battchk(c%).MrsPos, Battchk(c%).MrsLen)))
+            IF Battchk(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(Battchk(c%).IntLen), Battchk(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), Battchk(c%).IntLen, VAL(Battchk(c%).Adec))
+            END IF
+            IF Battchk(c%).IntPos > 0 AND Battchk(c%).IntLen > 0 THEN
+                MID$(Work$, Battchk(c%).IntPos, Battchk(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now the touch-up stuff
+
+'   Division, Area and Storeroom Codes
+
+    AreaCode Work$, Buffer$, Battchk(5).MrsPos, Battchk(5).MrsLen, 0, a$
+
+'   Hack to fix company/state problem in records
+
+    SELECT CASE LEFT$(a$, 1)
+        CASE "0"
+            MID$(Work$, 2, 4) = "10OH"
+        CASE "4"
+            MID$(Work$, 2, 4) = "04IN"
+        CASE "5"
+            MID$(Work$, 2, 4) = "05MI"
+        CASE "7"
+            MID$(Work$, 2, 4) = "07OH"
+    END SELECT
+
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "BattChk", 1, 2, 3, 5, 11, Battchk()
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process history records
+'============================================================================
+SUB ProcHistory (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "4"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Hstry%
+        IF History(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, History(c%).MrsPos, History(c%).MrsLen)))
+            IF History(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(History(c%).IntLen), History(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), History(c%).IntLen, VAL(History(c%).Adec))
+            END IF
+            IF History(c%).IntPos > 0 AND History(c%).IntLen > 0 THEN
+                MID$(Work$, History(c%).IntPos, History(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now the touch-up stuff
+
+'   Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = History(3).MrsLen - History(3).IntLen
+
+    AreaCode Work$, Buffer$, History(3).MrsPos + Diff%, History(3).MrsLen - Diff%, 0, a$
+
+'   Hack to fix company/state problem in records
+
+    SELECT CASE LEFT$(a$, 1)
+        CASE "0"
+            MID$(Work$, 2, 4) = "10OH"
+        CASE "4"
+            MID$(Work$, 2, 4) = "04IN"
+        CASE "5"
+            MID$(Work$, 2, 4) = "05MI"
+        CASE "7"
+            MID$(Work$, 2, 4) = "07OH"
+    END SELECT
+
+'   Status code.  Defaults to 08 if not entered.
+
+    IF MID$(Work$, 24, 2) = SPACE$(2) THEN
+        MID$(Work$, 24, 2) = "08"
+    END IF
+
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "History", 1, 2, 4, 3, 9, History()
+    WriteRecord RTRIM$(Work$)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process physical inventory records
+'============================================================================
+SUB ProcPhyInv (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "3"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO PhInv%
+        IF PhyInv(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, PhyInv(c%).MrsPos, PhyInv(c%).MrsLen)))
+            IF PhyInv(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(PhyInv(c%).IntLen), PhyInv(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), PhyInv(c%).IntLen, VAL(PhyInv(c%).Adec))
+            END IF
+            IF PhyInv(c%).IntPos > 0 AND PhyInv(c%).IntLen > 0 THEN
+                MID$(Work$, PhyInv(c%).IntPos, PhyInv(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now the touch-up stuff
+
+'   Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = PhyInv(3).MrsLen - PhyInv(3).IntLen
+
+    AreaCode Work$, Buffer$, PhyInv(3).MrsPos + Diff%, PhyInv(3).MrsLen - Diff%, 0, a$
+
+'   Hack to fix company/state problem in records
+
+    SELECT CASE LEFT$(a$, 1)
+        CASE "0"
+            MID$(Work$, 2, 4) = "10OH"
+        CASE "4"
+            MID$(Work$, 2, 4) = "04IN"
+        CASE "5"
+            MID$(Work$, 2, 4) = "05MI"
+        CASE "7"
+            MID$(Work$, 2, 4) = "07OH"
+    END SELECT
+
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "Phy Inv", 1, 2, 4, 3, 5, PhyInv()
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process status change records
+'============================================================================
+SUB ProcStatChg (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "6"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Status%
+        IF StatChg(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, StatChg(c%).MrsPos, StatChg(c%).MrsLen)))
+            IF StatChg(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(StatChg(c%).IntLen), StatChg(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), StatChg(c%).IntLen, VAL(StatChg(c%).Adec))
+            END IF
+            IF StatChg(c%).IntPos > 0 AND StatChg(c%).IntLen > 0 THEN
+                MID$(Work$, StatChg(c%).IntPos, StatChg(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now the touch-up stuff
+
+'   Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = StatChg(3).MrsLen - StatChg(3).IntLen
+
+    AreaCode Work$, Buffer$, StatChg(3).MrsPos + Diff%, StatChg(3).MrsLen - Diff%, 0, a$
+
+'   Hack to fix company/state problem in records
+
+    SELECT CASE LEFT$(a$, 1)
+        CASE "0"
+            MID$(Work$, 2, 4) = "10OH"
+        CASE "4"
+            MID$(Work$, 2, 4) = "04IN"
+        CASE "5"
+            MID$(Work$, 2, 4) = "05MI"
+        CASE "7"
+            MID$(Work$, 2, 4) = "07OH"
+    END SELECT
+
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "StatChg", 1, 2, 5, 3, 6, StatChg()
+    WriteRecord RTRIM$(Work$)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process test records
+'============================================================================
+SUB ProcTest (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "1"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Tst%
+        IF Test(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, Test(c%).MrsPos, Test(c%).MrsLen)))
+            IF Test(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(Test(c%).IntLen), Test(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), Test(c%).IntLen, VAL(Test(c%).Adec))
+            END IF
+            IF Test(c%).IntPos > 0 AND Test(c%).IntLen > 0 THEN
+                MID$(Work$, Test(c%).IntPos, Test(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now the touch-up stuff
+
+'   Test Description Code
+
+    MID$(Work$, 121, 2) = TestDesc$(MID$(Work$, 119, 2))
+
+'   Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = Test(3).MrsLen - Test(3).IntLen
+
+    AreaCode Work$, Buffer$, Test(3).MrsPos + Diff%, Test(3).MrsLen - Diff%, 0, a$
+
+'   Hack to fix company/state problem in records
+
+    SELECT CASE LEFT$(a$, 1)
+        CASE "0"
+            MID$(Work$, 2, 4) = "10OH"
+        CASE "4", "5"
+            MID$(Work$, 2, 4) = "04IN"
+        CASE "7"
+            MID$(Work$, 2, 4) = "07OH"
+    END SELECT
+
+'   Seal, if we're supposed to
+
+    IF LTRIM$(RTRIM$(MID$(Work$, 249, 4))) = "" THEN
+        MID$(Work$, 249, 4) = Seal$
+    END IF
+
+'   Test occurance number
+
+    IF MID$(Work$, 131, 1) = " " THEN
+        MID$(Work$, 131, 1) = "1"
+    END IF
+
+'   Status code
+
+    IF MID$(Work$, 24, 2) = SPACE$(2) THEN
+        MID$(Work$, 24, 2) = "23"
+    END IF
+
+'   Fill this in to avoid errors
+
+    MID$(Work$, 290, 5) = "00000"                   ' Timing acc a/f
+    MID$(Work$, 295, 5) = "00000"                   ' Timing acc a/l
+    MID$(Work$, 300, 3) = "000"                     ' Timing int len
+
+    IF Mds2Flag% = 1 THEN
+        IF MID$(Work$, 315, 5) = SPACE$(5) THEN
+            MID$(Work$, 315, 5) = "00000"           ' KVARH fl a/f
+        END IF
+        IF MID$(Work$, 320, 5) = SPACE$(5) THEN
+            MID$(Work$, 320, 5) = "00000"           ' KVARH fl a/l
+        END IF
+        IF MID$(Work$, 325, 5) = SPACE$(5) THEN
+            MID$(Work$, 325, 5) = "00000"           ' KVARH ll a/f
+        END IF
+        IF MID$(Work$, 330, 5) = SPACE$(5) THEN
+            MID$(Work$, 330, 5) = "00000"           ' KVARH ll a/l
+        END IF
+        IF VAL(MID$(Work$, 303, 5)) > 0 THEN
+            IF MID$(Work$, 205, 5) = SPACE$(5) THEN
+                MID$(Work$, 205, 5) = STRING$(5, "0")   ' KW read a/f
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 308, 5)) > 0 THEN
+            IF MID$(Work$, 215, 5) = SPACE$(5) THEN
+                MID$(Work$, 215, 5) = STRING$(5, "0")   ' KW read a/l
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 253, 5)) > 0 OR VAL(MID$(Work$, 263, 5)) > 0 THEN
+            IF MID$(Work$, 225, 5) = SPACE$(5) THEN
+                MID$(Work$, 225, 5) = STRING$(5, "0")   ' KWH read a/f
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 268, 5)) > 0 OR VAL(MID$(Work$, 278, 5)) > 0 THEN
+            IF MID$(Work$, 235, 5) = SPACE$(5) THEN
+                MID$(Work$, 235, 5) = STRING$(5, "0")   ' KWH read a/l
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 315, 5)) > 0 OR VAL(MID$(Work$, 325, 5)) > 0 THEN
+            IF MID$(Work$, 335, 5) = SPACE$(5) THEN
+                MID$(Work$, 335, 5) = STRING$(5, "0")   ' KVARH read a/f
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 320, 5)) <> 0 OR VAL(MID$(Work$, 330, 5)) <> 0 THEN
+            IF MID$(Work$, 345, 5) = SPACE$(5) THEN
+                MID$(Work$, 345, 5) = STRING$(5, "0")   ' KVARH read a/l
+            END IF
+        END IF
+        IF MID$(Work$, 355, 1) = " " THEN
+            MID$(Work$, 355, 1) = "N"                   ' KVARH stop flag
+        END IF
+    END IF
+   
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "Test", 1, 2, 5, 3, 8, Test()
+   
+    WriteRecord Work$
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process test/history records
+'============================================================================
+SUB ProcTestHist (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "2"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO TstHst%
+        IF TestHist(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, TestHist(c%).MrsPos, TestHist(c%).MrsLen)))
+            IF TestHist(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(TestHist(c%).IntLen), TestHist(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), TestHist(c%).IntLen, VAL(TestHist(c%).Adec))
+            END IF
+            IF TestHist(c%).IntPos > 0 AND TestHist(c%).IntLen > 0 THEN
+                MID$(Work$, TestHist(c%).IntPos, TestHist(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now do the touch-up stuff
+
+'   Activity code
+
+    MID$(Work$, 119, 2) = "01"
+
+'   Test Description Code
+
+    MID$(Work$, 121, 2) = TestDesc$(MID$(Work$, 119, 2))
+
+'   Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = TestHist(3).MrsLen - TestHist(3).IntLen
+
+    AreaCode Work$, Buffer$, TestHist(3).MrsPos + Diff%, TestHist(3).MrsLen - Diff%, 0, a$
+
+'   Hack to fix company/state problem in records
+
+    SELECT CASE LEFT$(a$, 1)
+        CASE "0"
+            MID$(Work$, 2, 4) = "10OH"
+        CASE "4"
+            MID$(Work$, 2, 4) = "04IN"
+        CASE "5"
+            MID$(Work$, 2, 4) = "05MI"
+        CASE "7"
+            MID$(Work$, 2, 4) = "07OH"
+    END SELECT
+
+'   New meter will not have stopped
+
+    MID$(Work$, 197, 1) = "N"
+
+'   Previous install indicator
+
+    IF MID$(Work$, 31, 1) = " " THEN
+        MID$(Work$, 31, 1) = "N"
+    END IF
+
+'   Seal, if we're supposed to
+
+    IF LTRIM$(RTRIM$(MID$(Work$, 249, 4))) = "" THEN
+        MID$(Work$, 249, 4) = Seal$
+    END IF
+
+'   Test occurance number
+
+    IF MID$(Work$, 131, 1) = " " THEN
+        MID$(Work$, 131, 1) = "1"
+    END IF
+
+'   Status code
+
+    IF MID$(Work$, 24, 2) = SPACE$(2) THEN
+        MID$(Work$, 24, 2) = "23"
+    END IF
+
+'   Fill this in to avoid errors
+
+    MID$(Work$, 290, 5) = "00000"                       ' Timing acc a/f
+    MID$(Work$, 295, 5) = "00000"                       ' Timing acc a/l
+    MID$(Work$, 300, 3) = "00000"                       ' Time int len
+
+    IF Mds2Flag% = 1 THEN
+        IF MID$(Work$, 315, 5) = SPACE$(5) THEN
+            MID$(Work$, 315, 5) = "00000"               ' KVARH fl a/f
+        END IF
+        IF MID$(Work$, 320, 5) = SPACE$(5) THEN
+            MID$(Work$, 320, 5) = "00000"               ' KVARH fl a/l
+        END IF
+        IF MID$(Work$, 325, 5) = SPACE$(5) THEN
+            MID$(Work$, 325, 5) = "00000"               ' KVARH ll a/f
+        END IF
+        IF MID$(Work$, 330, 5) = SPACE$(5) THEN
+            MID$(Work$, 330, 5) = "00000"               ' KVARH ll a/l
+        END IF
+        IF MID$(Work$, 303, 5) <> SPACE$(5) THEN
+            IF MID$(Work$, 205, 5) = SPACE$(5) THEN
+                MID$(Work$, 205, 5) = STRING$(5, "0")   ' KW read a/f
+            END IF
+        END IF
+        IF MID$(Work$, 308, 5) <> SPACE$(5) THEN
+            IF MID$(Work$, 215, 5) = SPACE$(5) THEN
+                MID$(Work$, 215, 5) = STRING$(5, "0")   ' KW read a/l
+            END IF
+        END IF
+        IF MID$(Work$, 253, 5) <> SPACE$(5) THEN
+            IF MID$(Work$, 225, 5) = SPACE$(5) THEN
+                MID$(Work$, 225, 5) = STRING$(5, "0")   ' KWH read a/f
+            END IF
+        END IF
+        IF MID$(Work$, 268, 5) <> SPACE$(5) THEN
+            IF MID$(Work$, 235, 5) = SPACE$(5) THEN
+                MID$(Work$, 235, 5) = STRING$(5, "0")   ' KWH read a/l
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 315, 5)) > 0 THEN
+            IF MID$(Work$, 335, 5) = SPACE$(5) THEN
+                MID$(Work$, 335, 5) = STRING$(5, "0")   ' KVARH read a/f
+            END IF
+        END IF
+        IF VAL(MID$(Work$, 320, 5)) <> 0 THEN
+            IF MID$(Work$, 345, 5) = SPACE$(5) THEN
+                MID$(Work$, 345, 5) = STRING$(5, "0")   ' KVARH read a/l
+            END IF
+        END IF
+        IF MID$(Work$, 355, 1) = " " THEN
+            MID$(Work$, 355, 1) = "N"                   ' KVARH stop flag
+        END IF
+    END IF
+  
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "Tst/Hst", 1, 2, 5, 3, 9, TestHist()
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process transfer records
+'============================================================================
+SUB ProcTransfer (Buffer$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(Magic%)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "5"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Trnsfr%
+        IF Transfer(c%).Adec <> "N" THEN
+            c$ = LTRIM$(RTRIM$(MID$(Buffer$, Transfer(c%).MrsPos, Transfer(c%).MrsLen)))
+            IF Transfer(c%).Adec = "A" THEN
+                c$ = LEFT$(c$ + SPACE$(Transfer(c%).IntLen), Transfer(c%).IntLen)
+            ELSE
+                c$ = RightSet$((c$), Transfer(c%).IntLen, VAL(Transfer(c%).Adec))
+            END IF
+            IF Transfer(c%).IntPos > 0 AND Transfer(c%).IntLen > 0 THEN
+                MID$(Work$, Transfer(c%).IntPos, Transfer(c%).IntLen) = c$
+            END IF
+        END IF
+    NEXT
+
+'   Now the touch-up stuff
+
+'   Company and state codes
+
+    IF LTRIM$(RTRIM$(MID$(Work$, 2, 2))) = "" THEN
+        MID$(Work$, 2, 2) = Company$
+    END IF
+
+    IF LTRIM$(RTRIM$(MID$(Work$, 4, 2))) = "" THEN
+        MID$(Work$, 4, 2) = State$
+    END IF
+
+'   Old Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = Transfer(3).MrsLen - Transfer(3).IntLen
+
+    AreaCode Work$, Buffer$, Transfer(3).MrsPos + Diff%, Transfer(3).MrsLen - Diff%, 0, a$
+
+'   New State, Division, Area and Storeroom Codes
+
+'   The following line handles either old or new version screen files
+
+    Diff% = Transfer(4).MrsLen - Transfer(4).IntLen
+
+    MID$(Work$, 14, 2) = MID$(Work$, 4, 2)
+
+    AreaCode Work$, Buffer$, Transfer(4).MrsPos + Diff%, Transfer(4).MrsLen - Diff%, 10, a$
+
+'   Report to operator, and write record
+
+    ProgRpt Buffer$, "Trnsfer", 1, 2, 5, 3, 6, Transfer()
+    WriteRecord RTRIM$(Work$)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Reports to operator what meter is being processed.
+'   Value passed in ToPrt% determines if report goes to screen or printer.
+'============================================================================
+SUB ProgRpt (Value$, RecType$, Code%, Serial%, Mfr%, Area%, Dt%, Work() AS IntRec)
+'----------------------------------------------------------------------------
+  
+'   First, look up the information we want reported
+
+    Code$ = MID$(Value$, Work(Code%).MrsPos, Work(Code%).MrsLen)
+    Serial$ = MID$(Value$, Work(Serial%).MrsPos, Work(Serial%).MrsLen)
+    Mfr$ = MID$(Value$, Work(Mfr%).MrsPos, Work(Mfr%).MrsLen)
+    Area$ = MID$(Value$, Work(Area%).MrsPos, Work(Area%).MrsLen)
+    Dt$ = MID$(Value$, Work(Dt%).MrsPos, Work(Dt%).MrsLen)
+    OutPut$ = Count$ + SPACE$(60)
+  
+'   Now put it in the output string
+
+    MID$(OutPut$, 14, 7) = RecType$
+    MID$(OutPut$, 23, 5) = Code$
+    MID$(OutPut$, 30, 9) = Serial$
+    MID$(OutPut$, 41, 2) = Mfr$
+    MID$(OutPut$, 45, 4) = Area$
+    MID$(OutPut$, 51, 8) = Dt$
+   
+'   Now display or print the output string
+
+    IF ToPrt% = 0 THEN
+        PRINT TAB(5); OutPut$
+    ELSE
+        LPRINT TAB(5); OutPut$
+    END IF
+  
+'   Increment the counter
+
+    Count% = Count% + 1
+   
+'   If the screen or the page is full, clear screen or eject paper, reset
+'   counter.
+
+    IF Count% >= ToPrt% * 35 + 20 THEN
+        PrintHeader
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Reads screen definition file passed in FileName$ into definition record
+'   array passed in Work.
+'============================================================================
+SUB ReadaScreen (DefPath$, FileName$, Work() AS IntRec, Recs%)
+'----------------------------------------------------------------------------
+
+'   Skip what we don't need.  Such is the price of flexibility.  Don't bother
+'   with  this information's format, just read it in as a string to skip past
+'   these lines.  The overall advantage of this system is that if changes are
+'   made in the MRDES II record, they are automatically sensed and the proper
+'   information is passed to the interface record.
+   
+    PRINT TAB(20); "Reading definition file: "; FileName$
+   
+'   Get a file buffer
+
+    Dpath% = FREEFILE
+   
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+'   Read and discard the messages
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+   
+    INPUT #Dpath%, Recs%         ' Number of records in screen file
+  
+'   Now we get the meat of the matter.
+
+    FOR x% = 1 TO Recs%
+        INPUT #Dpath%, Junk1%, Junk2%, Work(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, Work(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Work(x%).Adec, Work(x%).IntPos, Work(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Subprogram to read interface record definition files into records
+'============================================================================
+SUB ReadDefFiles
+'----------------------------------------------------------------------------
+
+'   Find file definition path, read global strings
+
+    Proc% = FREEFILE
+    OPEN "ProcPath" FOR INPUT AS #Proc%
+    FOR x% = 1 TO 5
+        LINE INPUT #Proc%, DefPath$
+    NEXT
+    DefPath$ = LTRIM$(RTRIM$(DefPath$))
+   
+    INPUT #Proc%, Company$, Seal$, State$
+    CLOSE #Proc%
+
+'   Format strings as necessary.  Company$ and State$ must be exactly two
+'   characters for MDS.
+
+    Company$ = LTRIM$(RTRIM$(Company$))
+    State$ = LTRIM$(RTRIM$(State$))
+
+'   If all is not well, inform operator, and suggest that processing is not
+'   a good idea.  Recommend exit, but allow the operator to press on if
+'   desired, though I can't imagine anyone actually continuing at this point.
+
+    IF LEN(Company$) <> 2 OR LEN(State$) <> 2 THEN
+        CLS
+        Cputs "Configuration file ERROR!", 10
+        IF LEN(Company$) <> 2 THEN
+            Cputs "Company ID code is NOT CORRECT! (" + Company$ + ")", 15
+        ELSE
+            Cputs "State code is NOT CORRECT! (" + State$ + ")", 15
+        END IF
+        Cputs "Correct processing CANNOT be assured with this condition.", 20
+        IF Get1Key$("CE", "C to continue, or E to exit.") = "E" THEN
+            Flag% = 1
+            EXIT SUB
+        END IF
+    END IF
+
+'   Operator information.  We'll put the version number on the screen during
+'   the screen definition file load as there's no menu.
+
+    CLS
+    COLOR 15, 0
+    FOR x% = 3 TO 9
+        SELECT CASE x%
+            CASE 3
+                Cputs "ษออออออออออออออออออออออออออออออออออออออออออออออออออป", 3
+            CASE 9
+                Cputs "ศออออออออออออออออออออออออออออออออออออออออออออออออออผ", 9
+            CASE ELSE
+                Cputs "บ                                                  บ", x%
+        END SELECT
+    NEXT
+    COLOR 14, 0
+    Cputs "MRDES II/MDS Interface Utility - Version 6.20", 5
+
+    COLOR 15, 3
+    Cputs "Reading definition files", 7
+    COLOR 7, 0
+    LOCATE 11, 1
+
+'   Open DATAFILE, and find the screen filenames.
+
+    OPEN "DataFile" FOR INPUT AS #Proc%
+
+'   Skip past what we don't need.
+
+    FOR x% = 1 TO 7
+        LINE INPUT #Proc%, Junk$
+    NEXT
+
+'   Now we're to the information we need for processing.
+'----------------------------------------------------------------------------
+'   Test Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, Test(), Tst%
+
+'----------------------------------------------------------------------------
+'   Test/History Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, TestHist(), TstHst%
+
+'----------------------------------------------------------------------------
+'   Physical Inventory Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, PhyInv(), PhInv%
+   
+'----------------------------------------------------------------------------
+'   History Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, History(), Hstry%
+   
+'----------------------------------------------------------------------------
+'   Transfer Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, Transfer(), Trnsfr%
+   
+'----------------------------------------------------------------------------
+'   Status Change Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, StatChg(), Status%
+   
+'----------------------------------------------------------------------------
+'   Battery Check Record
+
+    INPUT #Proc%, FileName$
+    ReadaScreen DefPath$, FileName$, Battchk(), Battery%
+   
+'   MDS1/MDS 2 flag
+
+    INPUT #Proc%, Mds$
+    INPUT #Proc%, Mds$
+    
+    Mds$ = LTRIM$(UCASE$(Mds$))
+    IF LEN(Mds$) > 4 THEN
+        Mds$ = LEFT$(Mds$, 4)
+    END IF
+    IF Mds$ = "MDS2" THEN
+        Mds2Flag% = 1
+    ELSE
+        Mds2Flag% = 0
+    END IF
+   
+    LINE INPUT #Proc%, WorkProdFile$
+    LINE INPUT #Proc%, WorkProdFile$
+    WorkProdFile$ = LTRIM$(RTRIM$(WorkProdFile$))
+
+    CLOSE #Proc%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Issue a final onscreen report to the operator.
+'============================================================================
+SUB Report
+'----------------------------------------------------------------------------
+    CLS
+
+    FOR Ctr& = 1 TO 7
+        TotalRecs& = TotalRecs& + Count&(Ctr&)
+    NEXT
+
+    COLOR 14, 0
+
+'   Draw a box
+
+    FOR Counter% = 2 TO 17
+        SELECT CASE Counter%
+            CASE 2
+                Cputs "ษออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออป", Counter%
+            CASE 7, 15
+                Cputs "วฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤฤถ", Counter%
+            CASE 17
+                Cputs "ศออออออออออออออออออออออออออออออออออออออออออออออออออออออออออออผ", Counter%
+            CASE ELSE
+                Cputs "บ                                                            บ", Counter%
+        END SELECT
+    NEXT
+
+'   Put company header, program identification and date at top
+
+    COLOR 15, 0
+    Cputs "Ohio Power Company", 3
+    Cputs "Protection and Measurements Electronics Laboratory", 4
+    Cputs "MRDES II Interface File Generate Utility", 5
+    Cputs "Final report for processing on " + DATE$, 6
+
+'   Print the number of each type of record.
+
+    Cputs RightSet$(STR$(Count&(1)), 5, 0) + " test records processed              ", 8
+    Cputs RightSet$(STR$(Count&(2)), 5, 0) + " test/history records processed      ", 9
+    Cputs RightSet$(STR$(Count&(3)), 5, 0) + " physical inventory records processed", 10
+    Cputs RightSet$(STR$(Count&(4)), 5, 0) + " history records processed           ", 11
+    Cputs RightSet$(STR$(Count&(5)), 5, 0) + " transfer records processed          ", 12
+    Cputs RightSet$(STR$(Count&(6)), 5, 0) + " status change records processed     ", 13
+    Cputs RightSet$(STR$(Count&(7)), 5, 0) + " battery check year records processed", 14
+    Cputs RightSet$(STR$(TotalRecs&), 5, 0) + " total records processed             ", 16
+
+'   Indicate running in MDS 2 mode, if appropriate
+
+    IF Mds2Flag% = 1 THEN
+        Cputs "Processed in MDS 2 mode", 18
+    END IF
+
+'   The report information is also written to the file "REPORT" in the
+'   default directory, so it'll be available if desired.  Each run overwrites
+'   this file, so it's not just growing.
+
+    OutFile% = FREEFILE
+    OPEN "Report" FOR OUTPUT AS #OutFile%
+    PRINT #OutFile%,
+    FOR Row% = 2 TO 18
+        Work$ = ""
+        FOR Column% = 1 TO 79
+            Work$ = Work$ + CHR$(SCREEN(Row%, Column%))
+        NEXT
+        Work$ = LTRIM$(RTRIM$(Work$))
+        PRINT #OutFile%, Work$
+    NEXT
+    CLOSE
+    LOCATE 23, 1
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Right sets a string representation of a value passed in Value$, either
+'   integer or floating point, into a string of TotalChars length, with
+'   any decimal portion being Dec% characters in length.  Value$ should be
+'   rounded to proper number of decmial places, if applicable, prior to
+'   calling this function.  String returned will be all numbers, with leading
+'   and trailing zeros as necessary to make the string TotalChar% in length.
+'============================================================================
+FUNCTION RightSet$ (Value$, TotalChar%, Dec%)
+'----------------------------------------------------------------------------
+    V$ = LTRIM$(RTRIM$(Value$))
+
+'   Is there a decimal point?
+
+    DecPt% = INSTR(V$, ".")
+    IF DecPt% = 0 THEN
+        V$ = V$ + "."
+        DecPt% = INSTR(V$, ".")
+    END IF
+
+'   If there is, get the decimal part of the number into Dec$
+
+    IF DecPt% > 0 AND DecPt% < LEN(V$) THEN
+        Dec$ = MID$(V$, DecPt% + 1)
+    END IF
+
+'   Properly format the decimal portion
+
+    IF Dec% > 0 THEN
+        Dec$ = LEFT$(Dec$ + STRING$(Dec%, "0"), Dec%)
+    END IF
+
+'   If there's an integer portion, get it into Integer$
+
+    IF DecPt% > 1 THEN
+        Integer$ = LEFT$(V$, DecPt% - 1)
+    END IF
+
+'   Assemble and return the string
+
+    RightSet$ = RIGHT$(STRING$(TotalChar%, "0") + Integer$ + Dec$, TotalChar%)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Looks up shop/field test description from activity code.
+'============================================================================
+FUNCTION TestDesc$ (Work$)
+'----------------------------------------------------------------------------
+    SELECT CASE Work$
+        CASE "06", "07", "08", "09", "12", "14"
+            TestDesc$ = "FD"
+        CASE ELSE
+            TestDesc$ = "SH"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Check for existing interface record file, allow operator to select
+'   overwrite or exit if file found.  If we're supposed to process, go ahead
+'   and generate the trailer record and return 0, if not, return 1.
+'============================================================================
+FUNCTION WriteHeader%
+'----------------------------------------------------------------------------
+
+    Hdr% = FREEFILE
+
+'   Is there a file there?
+
+    OPEN "MRS2MDS" FOR BINARY AS #Hdr%
+    Work& = LOF(Hdr%)
+    CLOSE #Hdr%
+    IF Work& > 0 THEN
+        CLS
+        Cputs "Interface file exists.", 20
+        Junk$ = Get1Key$("YN", "Continue? (Y/N)")
+        IF Junk$ = "N" THEN
+            WriteHeader% = 1
+            EXIT FUNCTION
+        END IF
+    END IF
+
+'   Ok, the file didn't exist, or we're supposed to do something with it.
+'   So, do it.  First generate a header record.
+
+    CLS
+
+    IF Mds2Flag% = 1 THEN
+        COLOR 31, 0
+        Cputs "Running in MDS 2 mode", 2
+        COLOR 7, 0
+    END IF
+   
+    Cputs "Writing Header Record", 5
+
+    OPEN "MRS2MDS" FOR OUTPUT AS #Hdr%
+    Work$ = "H" + Company$
+    Work$ = Work$ + LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+    PRINT #Hdr%, Work$
+    CLOSE #Hdr%
+
+'   Now scan the file, gathering information for the trailer record.  Keep the
+'   operator informed of progress.
+
+    Cputs "Generating Trailer Record", 10
+
+    OPEN DataFile$ FOR RANDOM AS #Hdr% LEN = 500
+    FIELD #Hdr%, 1 AS Tran$
+    COLOR 14, 0
+    FOR Counter% = 1 TO Records%
+        LOCATE 15, 1
+        PRINT SPACE$(70)
+        Cputs "Checking record" + STR$(Counter%) + " of" + STR$(Records%), 15
+        GET #Hdr%, Counter% + 1
+        x& = VAL(Tran$)
+        Count&(x&) = Count&(x&) + 1
+    NEXT
+    CLOSE
+
+'   Now generate and write the trailer record.
+
+    Cputs "Writing Trailer Record", 20
+    COLOR 7, 0
+    Work$ = "T" + Company$
+
+    FOR x& = 1 TO 7
+        Work$ = Work$ + RightSet$(STR$(Count&(x&)), 5, 0)
+    NEXT
+    WriteRecord Work$
+
+'   All is well.  Return code.
+
+    WriteHeader% = 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Opens file, appends record, closes file.
+'============================================================================
+SUB WriteRecord (Record$)
+'----------------------------------------------------------------------------
+    Wrt% = FREEFILE
+    OPEN "MRS2MDS" FOR APPEND AS #Wrt%
+    PRINT #Wrt%, RTRIM$(Record$)
+    CLOSE #Wrt%
+'****************************************************************************
+END SUB
+

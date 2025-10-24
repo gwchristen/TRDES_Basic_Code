@@ -1,0 +1,1040 @@
+'   $title:'DECODE - Decode Interface File'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   Version 1.00
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1993
+'       Added network error trapping
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Declare Procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION ActivityCode$ (Pointer$)
+DECLARE SUB CheckString (Accept$, Test$)
+DECLARE FUNCTION DamageCode$ (Pointer$)
+DECLARE SUB DataMissing ()
+DECLARE FUNCTION DecodeCompanyCode$ (Pointer$)
+DECLARE FUNCTION DecodeDivision$ (Work$)
+DECLARE FUNCTION DefectCode$ (Pointer$)
+DECLARE FUNCTION DemandZeroCode$ (Pointer$)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB OptionalData (Id$, Work$)
+DECLARE FUNCTION ParseCmdLine% (Argv$())
+DECLARE SUB ParseDataRecord (Work$)
+DECLARE SUB ParseHeaderRecord (Work$)
+DECLARE SUB ParseTrailerRecord (Work$)
+DECLARE SUB PrintaLine ()
+DECLARE SUB PrintDataRecord ()
+DECLARE SUB PrintHeaderRecord ()
+DECLARE SUB PrintTrailerRecord ()
+DECLARE SUB Prt (Work$)
+DECLARE SUB Prtl (Work$)
+DECLARE SUB RequiredData (Id$, Value$)
+DECLARE FUNCTION RetireCode$ (Pointer$)
+DECLARE FUNCTION TransactionCode$ (Pointer$)
+'============================================================================
+'   Dimension array
+'----------------------------------------------------------------------------
+    DIM SHARED OutFile%, Value$(100), Mds%
+    DIM Argv$(20)
+'============================================================================
+'   Turn on network error trap
+'----------------------------------------------------------------------------
+    ON ERROR GOTO NetProblem
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+   
+    CLS
+   
+'   Check command line for Mds1/Mds2 flag
+
+    Cline% = ParseCmdLine%(Argv$())
+    FOR Counter% = 1 TO Cline%
+        IF INSTR(UCASE$(Argv$(Counter%)), "/MDS2") > 0 THEN
+            Mds% = 1
+        END IF
+        IF InFile$ <> "" AND LEFT$(Argv$(Counter%), 1) <> "/" AND OutFile$ = "" THEN
+            OutFile$ = Argv$(Counter%)
+        END IF
+        IF LEFT$(Argv$(Counter%), 1) <> "/" AND InFile$ = "" THEN
+            InFile$ = Argv$(Counter%)
+        END IF
+    NEXT
+
+    IF InFile$ = "" THEN
+        LINE INPUT "Input Filespec:"; InFile$
+        InFile$ = LTRIM$(RTRIM$(InFile$))
+        IF InFile$ = "" THEN
+            END
+        END IF
+    END IF
+ 
+'   Prompt for output filespec if needed.  Set default to screen.
+
+    IF OutFile$ = "" THEN
+        LINE INPUT "Output filespec (just press Enter for screen):"; OutFile$
+        OutFile$ = LTRIM$(RTRIM$(OutFile$))
+        IF OutFile$ = "" THEN
+            OutFile$ = "CON"
+        END IF
+    END IF
+  
+'   Open the files
+
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    OutFile% = FREEFILE
+    OPEN OutFile$ FOR OUTPUT AS #OutFile%
+ 
+'   Here's the loop that does the work.  Read the file, one record, at a time,
+'   and call proper subs to process it.  Continue until the end of the input
+'   file is reached.
+
+    DO
+        x$ = INKEY$                         ' Allow abort with Esc key
+        IF x$ = CHR$(27) THEN
+            EXIT DO
+        END IF
+        LINE INPUT #InFile%, Work$
+        Code$ = LEFT$(Work$, 1)             ' Get Transaction Code
+        SELECT CASE Code$
+            CASE "H"
+                ParseHeaderRecord (Work$)
+                PrintHeaderRecord
+            CASE "T"
+                ParseTrailerRecord (Work$)
+                PrintTrailerRecord
+            CASE "1" TO "7"
+                ParseDataRecord (Work$)
+                PrintDataRecord
+            CASE ELSE
+                PRINT "ERROR!"
+                PRINT Work$
+                x$ = Get1Key$(CHR$(13), "Press Enter to continue")
+        END SELECT
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+    CLS
+
+Split:
+    END
+
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+    IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+    ELSE
+        x& = TIMER + 10
+        DO
+        Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+    END IF
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+
+'****************************************************************************
+'   End of DECODE.BAS main module
+'****************************************************************************
+
+'****************************************************************************
+'   Decodes activity code
+'============================================================================
+FUNCTION ActivityCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "01"
+            ActivityCode$ = Pointer$ + " - New"
+        CASE "02"
+            ActivityCode$ = Pointer$ + " - Sample Test (Shop)"
+        CASE "03"
+            ActivityCode$ = Pointer$ + " - Periodic Test (Shop)"
+        CASE "04"
+            ActivityCode$ = Pointer$ + " - Non-Periodic (Shop)"
+        CASE "05"
+            ActivityCode$ = Pointer$ + " - I. O. Customer (Shop)"
+        CASE "06"
+            ActivityCode$ = Pointer$ + " - Field Installation"
+        CASE "07"
+            ActivityCode$ = Pointer$ + " - Sample Test (Field)"
+        CASE "08"
+            ActivityCode$ = Pointer$ + " - Periodic Test (Field)"
+        CASE "09"
+            ActivityCode$ = Pointer$ + " - I. O. Customer (Field)"
+        CASE "10"
+            ActivityCode$ = Pointer$ + " - Second Sample Test"
+        CASE "11"
+            ActivityCode$ = Pointer$ + " - Maintenance Draw"
+        CASE "12"
+            ActivityCode$ = Pointer$ + " - Periodic Maintenance"
+        CASE "13"
+            ActivityCode$ = Pointer$ + " - Pallet Test"
+        CASE "14"
+            ActivityCode$ = Pointer$ + " - I. O. Commission (Field)"
+        CASE "15"
+            ActivityCode$ = Pointer$ + " - I. O. Commission (Shop)"
+        CASE "16"
+            ActivityCode$ = Pointer$ + " - Sample - Disqualified"
+        CASE ELSE
+            ActivityCode$ = Pointer$ + " - Unknown code:"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks Test$ to see that is in Accept$.  Prints string.  Adds error
+'   message if all is not well.
+'============================================================================
+SUB CheckString (Accept$, Test$)
+'----------------------------------------------------------------------------
+    IF INSTR(Accept$, Test$) > 0 THEN
+        Prtl Test$
+    ELSE
+        Prtl Test$ + " - Invalid data in field"
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Decodes damage code
+'============================================================================
+FUNCTION DamageCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "01"
+            DamageCode$ = Pointer$ + " - Tampering"
+        CASE "02"
+            DamageCode$ = Pointer$ + " - Fire"
+        CASE "03"
+            DamageCode$ = Pointer$ + " - Flood"
+        CASE "04"
+            DamageCode$ = Pointer$ + " - Lightning"
+        CASE "05"
+            DamageCode$ = Pointer$ + " - Overload"
+        CASE "06"
+            DamageCode$ = Pointer$ + " - Time in years"
+        CASE "08"
+            DamageCode$ = Pointer$ + " - Vandalism"
+        CASE "09"
+            DamageCode$ = Pointer$ + " - Customer Intentional"
+        CASE "10"
+            DamageCode$ = Pointer$ + " - Customer Unintentional"
+        CASE "11"
+            DamageCode$ = Pointer$ + " - Employee Unintentional"
+        CASE "12"
+            DamageCode$ = Pointer$ + " - In Transit"
+        CASE "13"
+            DamageCode$ = Pointer$ + " - Reason Not Known"
+        CASE ELSE
+            DamageCode$ = Pointer$ + " - Unknown code:"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints missing data message
+'============================================================================
+SUB DataMissing
+'----------------------------------------------------------------------------
+    Prtl "Data missing in required field"
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Decodes AEP Company Code
+'============================================================================
+FUNCTION DecodeCompanyCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "07"
+            DecodeCompanyCode$ = Pointer$ + " - Ohio Power Company"
+        CASE "10"
+            DecodeCompanyCode$ = Pointer$ + " - Columbus Southern Power Company"
+        CASE ELSE
+            DecodeCompanyCode$ = Pointer$ + " - Unknown Company"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Decodes division code
+'============================================================================
+FUNCTION DecodeDivision$ (Work$)
+'----------------------------------------------------------------------------
+    SELECT CASE Work$
+        CASE "00"
+            DecodeDivision$ = Work$ + " - General Office"
+        CASE "01"
+            DecodeDivision$ = Work$ + " - Steubenville Division"
+        CASE "02"
+            DecodeDivision$ = Work$ + " - Canton Division"
+        CASE "04"
+            DecodeDivision$ = Work$ + " - Zanesville Division"
+        CASE "05"
+            DecodeDivision$ = Work$ + " - Newark Division"
+        CASE "06"
+            DecodeDivision$ = Work$ + " - Portsmouth Division"
+        CASE "07"
+            DecodeDivision$ = Work$ + " - Tiffin Division"
+        CASE "09"
+            DecodeDivision$ = Work$ + " - Lima Division"
+        CASE ELSE
+            DecodeDivision$ = Work$ + " - Unknown Division Code"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Decodes defect code
+'****************************************************************************
+FUNCTION DefectCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "01"
+            DefectCode$ = Pointer$ + " - Cover"
+        CASE "02"
+            DefectCode$ = Pointer$ + " - Gasket"
+        CASE "03"
+            DefectCode$ = Pointer$ + " - Moisture in Meter"
+        CASE "04"
+            DefectCode$ = Pointer$ + " - Foreign Matter in Meter"
+        CASE "05"
+            DefectCode$ = Pointer$ + " - Base"
+        CASE "06"
+            DefectCode$ = Pointer$ + " - Surge Protectors"
+        CASE "07"
+            DefectCode$ = Pointer$ + " - Terminal Blade"
+        CASE "08"
+            DefectCode$ = Pointer$ + " - Terminal Block"
+        CASE "09"
+            DefectCode$ = Pointer$ + " - Current Coil"
+        CASE "10"
+            DefectCode$ = Pointer$ + " - Potential Coil"
+        CASE "11"
+            DefectCode$ = Pointer$ + " - Insulation"
+        CASE "12"
+            DefectCode$ = Pointer$ + " - Frame"
+        CASE "13"
+            DefectCode$ = Pointer$ + " - Lag Coil"
+        CASE "14"
+            DefectCode$ = Pointer$ + " - Lag Plate"
+        CASE "16"
+            DefectCode$ = Pointer$ + " - L. L. Adjustment"
+        CASE "17"
+            DefectCode$ = Pointer$ + " - F. L. Adjustment"
+        CASE "18"
+            DefectCode$ = Pointer$ + " - Disk"
+        CASE "19"
+            DefectCode$ = Pointer$ + " - Bearing Jewel"
+        CASE "20"
+            DefectCode$ = Pointer$ + " - Bearings/Magnetic Suspension"
+        CASE "21"
+            DefectCode$ = Pointer$ + " - Guide Pin"
+        CASE "22"
+            DefectCode$ = Pointer$ + " - Magnet"
+        CASE "23"
+            DefectCode$ = Pointer$ + " - Air Gap"
+        CASE "24"
+            DefectCode$ = Pointer$ + " - Register Mesh"
+        CASE "25"
+            DefectCode$ = Pointer$ + " - Register Mechanical"
+        CASE "26"
+            DefectCode$ = Pointer$ + " - Register KWH Solid State"
+        CASE "27"
+            DefectCode$ = Pointer$ + " - Register KW Mechanical"
+        CASE "28"
+            DefectCode$ = Pointer$ + " - Register KW Thermal"
+        CASE "29"
+            DefectCode$ = Pointer$ + " - Time Interval"
+        CASE "30"
+            DefectCode$ = Pointer$ + " - Pulse Initiator"
+        CASE "31"
+            DefectCode$ = Pointer$ + " - Reset Mechanism"
+        CASE "32"
+            DefectCode$ = Pointer$ + " - Outside Accuracy Limit"
+        CASE "33"
+            DefectCode$ = Pointer$ + " - Dielectric Failure"
+        CASE "34"
+            DefectCode$ = Pointer$ + " - Mechanical Defect"
+        CASE "35"
+            DefectCode$ = Pointer$ + " - Broken Terminal"
+        CASE "36"
+            DefectCode$ = Pointer$ + " - Broken Bushing"
+        CASE "37"
+            DefectCode$ = Pointer$ + " - Damaged Insulation"
+        CASE "38"
+            DefectCode$ = Pointer$ + " - Broken Shorting Device"
+        CASE "39"
+            DefectCode$ = Pointer$ + " - Terminal Box"
+        CASE "40"
+            DefectCode$ = Pointer$ + " - Defective Paint"
+        CASE "41"
+            DefectCode$ = Pointer$ + " - Rust"
+        CASE "42"
+            DefectCode$ = Pointer$ + " - Oil Leak"
+        CASE "43"
+            DefectCode$ = Pointer$ + " - Missing Nameplate"
+        CASE "44"
+            DefectCode$ = Pointer$ + " - Incorrect Polarity"
+        CASE "45"
+            DefectCode$ = Pointer$ + " - Transformer Magnetized"
+        CASE "46"
+            DefectCode$ = Pointer$ + " - In Service Failure"
+        CASE "47"
+            DefectCode$ = Pointer$ + " - Battery Failure"
+        CASE "48"
+            DefectCode$ = Pointer$ + " - Battery Leakage"
+        CASE "49"
+            DefectCode$ = Pointer$ + " - Power Supply Input Damage"
+        CASE "50"
+            DefectCode$ = Pointer$ + " - Power Supply Failure"
+        CASE "51"
+            DefectCode$ = Pointer$ + " - Rotation Sensor Failure"
+        CASE "52"
+            DefectCode$ = Pointer$ + " - Display Failure"
+        CASE "53"
+            DefectCode$ = Pointer$ + " - Modem Port Failure"
+        CASE "54"
+            DefectCode$ = Pointer$ + " - Optic Port Failure"
+        CASE "55"
+            DefectCode$ = Pointer$ + " - EEPROM/ROM Failure"
+        CASE "56"
+            DefectCode$ = Pointer$ + " - Pulse Input Failure"
+        CASE "57"
+            DefectCode$ = Pointer$ + " - Load Control Output Failure"
+        CASE "58"
+            DefectCode$ = Pointer$ + " - KYZ Output Failure"
+        CASE "59"
+            DefectCode$ = Pointer$ + " - Data Storage Module Failure"
+        CASE "60"
+            DefectCode$ = Pointer$ + " - Failed in Stock"
+        CASE "61"
+            DefectCode$ = Pointer$ + " - Failed During Test"
+        CASE ELSE
+            DefectCode$ = Pointer$ + " - Unknown defect code"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Decode Demand Zero Code
+'============================================================================
+FUNCTION DemandZeroCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "1"
+            DemandZeroCode$ = Pointer$ + " - Stopped"
+        CASE "3"
+            DemandZeroCode$ = Pointer$ + " - Below Zero"
+        CASE "5"
+            DemandZeroCode$ = Pointer$ + " - On Zero"
+        CASE "7"
+            DemandZeroCode$ = Pointer$ + " - Above Zero"
+        CASE ELSE
+            DemandZeroCode$ = Pointer$ + " - Unknown demand zero code"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints optional data, if it's there.
+'============================================================================
+SUB OptionalData (Id$, Work$)
+'----------------------------------------------------------------------------
+    IF LTRIM$(RTRIM$(Work$)) <> "" THEN
+        Prtl Id$ + Work$
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parse Elements from Interface File Data Record
+'============================================================================
+SUB ParseDataRecord (Work$)
+'----------------------------------------------------------------------------
+    Work$ = Work$ + SPACE$(600)         ' Make string long enough to eliminate problems
+    Value$(1) = MID$(Work$, 1, 1)       ' Transaction Code
+    Value$(2) = MID$(Work$, 2, 2)       ' Company Code
+    Value$(3) = MID$(Work$, 4, 2)       ' State Code
+    Value$(4) = MID$(Work$, 6, 2)       ' Division Code
+    Value$(5) = MID$(Work$, 8, 3)       ' Area Code
+    Value$(6) = MID$(Work$, 11, 3)      ' Storeroom Number
+    Value$(7) = MID$(Work$, 14, 2)      ' Receiving State Code
+    Value$(8) = MID$(Work$, 16, 2)      ' Receiving Division Code
+    Value$(9) = MID$(Work$, 18, 3)      ' Receiving Area Code
+    Value$(10) = MID$(Work$, 21, 3)     ' Receiving Storeroom Code
+    Value$(11) = MID$(Work$, 24, 2)     ' Status Code
+    Value$(12) = MID$(Work$, 26, 5)     ' Purchase Code
+    Value$(13) = MID$(Work$, 31, 1)     ' Previous Installed Indicator (Y/N)
+    Value$(14) = MID$(Work$, 32, 2)     ' Device Manufacturer Code
+    Value$(15) = MID$(Work$, 34, 5)     ' Device Code
+    Value$(16) = MID$(Work$, 39, 26)    ' Device Serial Number
+    Value$(17) = MID$(Work$, 65, 5)     ' Device Code (Accessory Device Only)
+    Value$(18) = MID$(Work$, 70, 2)     ' Accessory Type Code (Accessory Device Only)
+    Value$(19) = MID$(Work$, 72, 2)     ' Manufacturer Code (Accessory Device Only)
+    Value$(20) = MID$(Work$, 74, 4)     ' Battery Check Year (Associated Device Only)
+    Value$(21) = MID$(Work$, 78, 2)     ' Associated Manufacturer Code (Register Only)
+    Value$(22) = MID$(Work$, 80, 5)     ' Associated Device Code (Register Only)
+    Value$(23) = MID$(Work$, 85, 26)    ' Associated Device Serial Number (Register Only)
+    Value$(24) = MID$(Work$, 111, 8)    ' Tester Identification
+    Value$(25) = MID$(Work$, 119, 2)    ' Activity Type Code
+    Value$(26) = MID$(Work$, 121, 2)    ' Test Description Code (FD=Field, SH=Shop)
+    Value$(27) = MID$(Work$, 123, 8)    ' Test Date (mmddyyyy)
+    Value$(28) = MID$(Work$, 131, 1)    ' Test Occurance Number
+    Value$(29) = MID$(Work$, 132, 50)   ' Remarks Regarding Test
+    Value$(30) = MID$(Work$, 182, 2)    ' Retirement Reason Code
+    Value$(31) = MID$(Work$, 184, 1)    ' Repair Indicator (Y/N)
+    Value$(32) = MID$(Work$, 185, 2)    ' Damage Code One
+    Value$(33) = MID$(Work$, 187, 2)    ' Damage Code Two
+    Value$(34) = MID$(Work$, 189, 2)    ' Damage Code Three
+    Value$(35) = MID$(Work$, 191, 2)    ' Defect Code One
+    Value$(36) = MID$(Work$, 193, 2)    ' Defect Code Two
+    Value$(37) = MID$(Work$, 195, 2)    ' Defect Code Three
+    Value$(38) = MID$(Work$, 197, 1)    ' Meter Stop Indicator (Y/N)
+    Value$(39) = MID$(Work$, 198, 7)    ' Full Scale Demand
+    Value$(40) = MID$(Work$, 205, 10)   ' KW Reading As Found
+    Value$(41) = MID$(Work$, 215, 10)   ' KW Reading As Left
+    Value$(42) = MID$(Work$, 225, 10)   ' KWH Reading As Found
+    Value$(43) = MID$(Work$, 235, 10)   ' KWH Reading As Left
+    Value$(44) = MID$(Work$, 245, 4)    ' Seal Code As Found
+    Value$(45) = MID$(Work$, 249, 4)    ' Seal Code As Left
+    Value$(46) = MID$(Work$, 253, 5)    ' Series Percent Accuracy As Found - Full Load
+    Value$(47) = MID$(Work$, 258, 5)    ' Series Percent Accuracy As Found - Lag Load
+    Value$(48) = MID$(Work$, 263, 5)    ' Series Percent Accuracy As Found - Light Load
+    Value$(49) = MID$(Work$, 268, 5)    ' Series Percent Accuracy As Left - Full Load
+    Value$(50) = MID$(Work$, 273, 5)    ' Series Percent Accuracy As Left - Lag Load
+    Value$(51) = MID$(Work$, 278, 5)    ' Series Percent Accuracy As Left - Light Load
+    Value$(52) = MID$(Work$, 283, 7)    ' Standard ID Number
+    Value$(53) = MID$(Work$, 290, 5)    ' Timing Percent Accuracy As Found
+    Value$(54) = MID$(Work$, 295, 5)    ' Timing Percent Accuracy As Left
+    Value$(55) = MID$(Work$, 300, 3)    ' Timing Interval Length
+    Value$(56) = MID$(Work$, 303, 5)    ' Upscale Percent Accuracy As Found
+    Value$(57) = MID$(Work$, 308, 5)    ' Upscale Percent Accuracy As Left
+    Value$(58) = MID$(Work$, 313, 1)    ' Zero Code As Found
+    Value$(59) = MID$(Work$, 314, 1)    ' Zero Code As Left
+    Value$(60) = MID$(Work$, 315, 7)    ' Doble Test
+    Value$(61) = MID$(Work$, 322, 6)    ' Primary to Secondary Case Volts
+    Value$(62) = MID$(Work$, 328, 4)    ' Secondary to Primary Case Volts
+    Value$(63) = MID$(Work$, 332, 8)    ' Test Ratio
+    Value$(64) = MID$(Work$, 340, 4)    ' Test Burden
+    Value$(65) = MID$(Work$, 344, 4)    ' Secondary Amps
+    Value$(66) = MID$(Work$, 348, 4)    ' Secondary Volts
+    Value$(67) = MID$(Work$, 352, 5)    ' Ratio Correction Factor
+    Value$(68) = MID$(Work$, 357, 1)    ' Sign For Phase Angle Error (+/-)
+    Value$(69) = MID$(Work$, 358, 4)    ' Phase Angle Error
+    Value$(70) = MID$(Work$, 362, 3)    ' Test Accuracy Class
+    Value$(71) = MID$(Work$, 365, 1)    ' Polarity Mark Check (Y/N)
+    Value$(72) = MID$(Work$, 366, 1)    ' Transformer Demagnitize Indicator (Y/N)
+    Value$(73) = MID$(Work$, 367, 8)    ' PCB Level
+    Value$(74) = MID$(Work$, 375, 10)   ' Test Set Name Identification
+    Value$(75) = MID$(Work$, 385, 6)    ' Phase to Phase Accuracy (1 to 2)
+    Value$(76) = MID$(Work$, 391, 6)    ' Phase to Phase Accuracy (2 to 3)
+    Value$(77) = MID$(Work$, 397, 6)    ' Phase to Phase Accuracy (3 to 1)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parse Header Record
+'============================================================================
+SUB ParseHeaderRecord (Work$)
+'----------------------------------------------------------------------------
+    Work$ = Work$ + SPACE$(50)
+    Value$(1) = MID$(Work$, 1, 1)       ' Transaction Code
+    Value$(2) = MID$(Work$, 2, 2)       ' Company Code
+    Value$(3) = MID$(Work$, 4, 8)       ' Date
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parse information from trailer record
+'============================================================================
+SUB ParseTrailerRecord (Work$)
+'----------------------------------------------------------------------------
+    Work$ = Work$ + SPACE$(50)
+    Value$(1) = MID$(Work$, 1, 1)       ' Transaction Code
+    Value$(2) = MID$(Work$, 2, 2)       ' Company Code
+    Value$(3) = MID$(Work$, 4, 5)       ' Test Record Count
+    Value$(4) = MID$(Work$, 9, 5)       ' Test/History Record Count
+    Value$(5) = MID$(Work$, 14, 5)      ' Physical Inventory Record Count
+    Value$(6) = MID$(Work$, 19, 5)      ' History Record Count
+    Value$(7) = MID$(Work$, 24, 5)      ' Transfer Record Count
+    Value$(8) = MID$(Work$, 29, 5)      ' Status Change Record Count
+    Value$(9) = MID$(Work$, 34, 5)      ' Battery Check Year Record Count
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints a line of hyphens
+'============================================================================
+SUB PrintaLine
+'----------------------------------------------------------------------------
+    Prtl STRING$(65, "-")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Decode and print data record
+'============================================================================
+SUB PrintDataRecord
+'----------------------------------------------------------------------------
+    PrintaLine
+  
+    Prtl "MDS Transaction Code:" + TransactionCode$(Value$(1))
+  
+    Prtl "Company Code:" + DecodeCompanyCode$(Value$(2))
+  
+    RequiredData "State Code:", Value$(3)
+  
+    Prt "Division Code:"
+    IF LTRIM$(RTRIM$(Value$(4))) <> "" THEN
+        Prtl DecodeDivision$(Value$(4))
+    ELSE
+        DataMissing
+    END IF
+  
+    RequiredData "Area Code:", Value$(5)
+  
+    RequiredData "Storeroom Number:", Value$(6)
+  
+    IF Value$(1) = "5" THEN
+        RequiredData "Receiving State Code:", Value$(7)
+        Prt "Receiving Division Code:"
+        IF LTRIM$(RTRIM$(Value$(8))) <> "" THEN
+            Prtl DecodeDivision$(Value$(8))
+        ELSE
+            DataMissing
+        END IF
+ 
+        RequiredData "Receiving Area Code:", Value$(9)
+        RequiredData "Receiving Storeroom Code:", Value$(10)
+    END IF
+  
+    IF Value$(1) = "6" OR LTRIM$(RTRIM$(Value$(11))) <> "" THEN
+        Prt "Status Code:"
+            IF Value$(1) <> "6" OR LTRIM$(RTRIM$(Value$(11))) <> "" THEN
+                Prtl Value$(11)
+            ELSE
+                DataMissing
+            END IF
+    END IF
+  
+    IF Value$(1) = "2" OR Value$(1) = "4" THEN
+        RequiredData "Purchase Code:", Value$(12)
+        Prt "Previous Installed Indicator (Y/N):"
+        CheckString "YN", Value$(13)
+    END IF
+  
+    RequiredData "Device Manufacturer Code:", Value$(14)
+  
+    RequiredData "Device Code:", Value$(15)
+  
+    RequiredData "Device Serial Number:", Value$(16)
+  
+    IF Value$(1) = "7" THEN
+        RequiredData "Device Code (Accessory Device Only):", Value$(17)
+        RequiredData "Accessory Type Code (Accessory Device Only):", Value$(18)
+        RequiredData "Manufacturer Code (Accessory Device Only):", Value$(19)
+        RequiredData "Battery Check Year (Accessory Device Only):", Value$(20)
+    END IF
+ 
+'   If there's no test transaction, this record is done.
+
+    IF Value$(1) > "2" THEN
+        EXIT SUB
+    END IF
+  
+    IF LTRIM$(RTRIM$(Value$(21))) <> "" THEN
+        Prtl "Associated Manufacturer Code (Register Only):" + Value$(21)
+        Prtl "Associated Device Code (Register Only):" + Value$(22)
+        Prtl "Associated Device Serial Number (Register Only):" + Value$(23)
+    END IF
+  
+    IF LTRIM$(RTRIM$(Value$(24))) <> "" THEN
+        Prtl "Tester Identification:" + Value$(24)
+    END IF
+  
+    Prt "Activity Type Code:"
+    IF LTRIM$(RTRIM$(Value$(25))) <> "" THEN
+        Prtl ActivityCode$(Value$(25))
+    ELSE
+        DataMissing
+    END IF
+  
+    Prt "Test Description Code (FD=Field, SH=Shop):"
+    IF LTRIM$(RTRIM$(Value$(26))) <> "" THEN
+        CheckString "FDSH", Value$(26)
+    ELSE
+        DataMissing
+    END IF
+  
+    Prt "Test Date (MmDdYyyy):"
+    IF LTRIM$(RTRIM$(Value$(27))) <> "" THEN
+        Flag% = 0
+        FOR c% = 1 TO LEN(Value$(27))
+            IF INSTR("0123456789", MID$(Value$(27), c%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF Flag% = 0 THEN
+            Prtl Value$(27)
+        ELSE
+            Prtl Value$(27) + " - Invalid data in field"
+        END IF
+    ELSE
+        DataMissing
+    END IF
+    Prtl "Test Occurance Number:" + Value$(28)
+    OptionalData "Remarks Regarding Test:", LTRIM$(RTRIM$(Value$(29)))
+    IF LTRIM$(RTRIM$(Value$(30))) <> "" THEN
+        Prtl "Retirement Reason:" + RetireCode$(Value$(30))
+    END IF
+  
+    Prt "Repair Indicator (Y/N):"
+    IF INSTR("YN", Value$(31)) > 0 THEN
+        Prtl Value$(31)
+    ELSE
+        Prtl Value$(31) + " Invalid data in field"
+    END IF
+    IF LTRIM$(RTRIM$(Value$(32))) <> "" THEN
+        Prtl "Damage Code One:" + DamageCode$(Value$(32))
+    END IF
+    IF LTRIM$(RTRIM$(Value$(33))) <> "" THEN
+        Prtl "Damage Code Two:" + DamageCode$(Value$(33))
+    END IF
+    IF LTRIM$(RTRIM$(Value$(34))) <> "" THEN
+        Prtl "Damage Code Three:" + DamageCode$(Value$(34))
+    END IF
+    IF LTRIM$(RTRIM$(Value$(35))) <> "" THEN
+        Prtl "Defect Code One:" + DefectCode$(Value$(35))
+    END IF
+    IF LTRIM$(RTRIM$(Value$(36))) <> "" THEN
+        Prtl "Defect Code Two:" + DefectCode$(Value$(36))
+    END IF
+    IF LTRIM$(RTRIM$(Value$(37))) <> "" THEN
+        Prtl "Defect Code Three:" + DefectCode$(Value$(37))
+    END IF
+  
+    Prt "Meter Stop Indicator (Y/N):"
+    CheckString "YN", Value$(38)
+    IF VAL(Value$(30)) > 0 THEN
+        Prtl "Full Scale Demand:" + Value$(39)
+    END IF
+  
+    OptionalData "KW Reading As Found:", Value$(40)
+    OptionalData "KW Reading As Left:", Value$(41)
+    OptionalData "KWH Reading As Found:", Value$(42)
+    OptionalData "KWH Reading As Left:", Value$(43)
+    OptionalData "Seal Code As Found:", Value$(44)
+    OptionalData "Seal Code As Left:", Value$(45)
+   
+    IF VAL(Value$(46)) > 0 THEN
+        Prtl "Series Percent Accuracy As Found - Full Load:" + Value$(46)           ' Series Percent Accuracy As Found - Full Load
+    END IF
+    IF VAL(Value$(47)) > 0 THEN
+        Prtl "Series Percent Accuracy As Found - Lag Load:" + Value$(47)
+    END IF
+    IF VAL(Value$(48)) > 0 THEN
+        Prtl "Series Percent Accuracy As Found - Light Load:" + Value$(48)
+    END IF
+    IF VAL(Value$(49)) > 0 THEN
+        Prtl "Series Percent Accuracy As Left - Full Load:" + Value$(49)
+    END IF
+    IF VAL(Value$(50)) > 0 THEN
+        Prtl "Series Percent Accuracy As Left - Lag Load:" + Value$(50)
+    END IF
+    IF VAL(Value$(51)) > 0 THEN
+        Prtl "Series Percent Accuracy As Left - Light Load:" + Value$(51)
+    END IF
+    OptionalData "Standard ID Number:", Value$(52)
+   
+'   The next few fields are only printed if we're looking at a meter test
+
+    IF VAL(Value$(53)) > 0 THEN
+        Prtl "Timing Percent Accuracy As Found:" + Value$(53)
+    END IF
+    IF VAL(Value$(54)) > 0 THEN
+        Prtl "Timing Percent Accuracy As Left:" + Value$(54)
+    END IF
+    IF VAL(Value$(55)) > 0 THEN
+        Prtl "Timing Interval Length:" + Value$(55)
+    END IF
+    IF VAL(Value$(56)) > 0 THEN
+        Prtl "Upscale Percent Accuracy As Found:" + Value$(56)
+    END IF
+    IF VAL(Value$(57)) > 0 THEN
+        Prtl "Upscale Percent Accuracy As Left:" + Value$(57)
+    END IF
+    OptionalData "Zero Code As Found:", Value$(58)
+    OptionalData "Zero Code As Left:", Value$(59)
+ 
+'   If it's a meter, data list is done.  Meter codes changing as they are may
+'   require looking at this test again in the future.
+
+    IF LEFT$(Value$(15), 1) < "A" THEN
+        EXIT SUB
+    END IF
+    OptionalData "Doble Test:", Value$(60)
+  
+    Prt "Primary to Secondary Case Volts:"
+    IF LTRIM$(RTRIM$(Value$(61))) <> "" AND VAL(Value$(61)) > 0 THEN
+        Prtl Value$(61)
+    ELSE
+        DataMissing
+    END IF
+  
+    Prt "Secondary to Primary Case Volts:"
+    IF LTRIM$(RTRIM$(Value$(62))) <> "" AND VAL(Value$(62)) > 0 THEN
+        Prtl Value$(62)
+    ELSE
+        DataMissing
+    END IF
+  
+    Prt "Test Ratio:"
+    IF LTRIM$(RTRIM$(Value$(63))) <> "" AND VAL(Value$(63)) > 0 THEN
+        Prtl Value$(63)
+    ELSE
+        DataMissing
+    END IF
+    RequiredData "Test Burden:", Value$(64)
+  
+    Prt "Secondary Amps:"
+    IF LTRIM$(RTRIM$(Value$(65))) <> "" THEN
+        Flag% = 0
+        FOR c% = 1 TO LEN(Value$(65))
+            IF INSTR("0123456789", MID$(Value$(65), c%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF Flag% = 0 THEN
+            Prtl Value$(65)
+        ELSE
+            Prtl Value$(65) + " - Invalid data in field"
+        END IF
+    ELSE
+        DataMissing
+    END IF
+    Prt "Secondary Volts:"
+    IF LTRIM$(RTRIM$(Value$(66))) <> "" THEN
+        Flag% = 0
+        FOR c% = 1 TO LEN(Value$(66))
+            IF INSTR("0123456789", MID$(Value$(66), c%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF Flag% = 0 THEN
+            Prtl Value$(66)
+        ELSE
+            Prtl Value$(66) + " - Invalid data in field"
+        END IF
+    ELSE
+        DataMissing
+    END IF
+    Prt "Ratio Correction Factor:"
+    IF LTRIM$(RTRIM$(Value$(67))) <> "" THEN
+        Flag% = 0
+        FOR c% = 1 TO LEN(Value$(67))
+            IF INSTR("0123456789", MID$(Value$(67), c%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF Flag% = 0 THEN
+            Prtl Value$(67)
+        ELSE
+            Prtl Value$(67) + " - Invalid data in field"
+        END IF
+    ELSE
+        DataMissing
+    END IF
+    Prt "Sign For Phase Angle Error (+/-):"
+    CheckString "+-", Value$(68)
+  
+    Prt "Phase Angle Error:"
+    IF LTRIM$(RTRIM$(Value$(69))) <> "" THEN
+        Flag% = 0
+        FOR c% = 1 TO LEN(Value$(69))
+            IF INSTR("0123456789", MID$(Value$(69), c%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF Flag% = 0 THEN
+            Prtl Value$(69)
+        ELSE
+            Prtl Value$(69) + " - Invalid data in field"
+        END IF
+    ELSE
+        DataMissing
+    END IF
+    Prt "Test Accuracy Class:"
+    IF LTRIM$(RTRIM$(Value$(70))) <> "" THEN
+        Flag% = 0
+        FOR c% = 1 TO LEN(Value$(70))
+            IF INSTR("0123456789", MID$(Value$(70), c%, 1)) = 0 THEN
+                Flag% = 1
+            END IF
+        NEXT
+        IF Flag% = 0 THEN
+            Prtl Value$(70)
+        ELSE
+            Prtl Value$(70) + " - Invalid data in field"
+        END IF
+    ELSE
+        DataMissing
+    END IF
+    Prt "Polarity Mark Check (Y/N):"
+    IF INSTR("YN", Value$(71)) > 0 THEN
+        Prtl Value$(71)
+    ELSE
+        Prtl Value$(71) + " - Invalid data in field"
+    END IF
+  
+    Prt "Transformer Demagnitize Indicator (Y/N):"
+    CheckString "YN", Value$(72)
+  
+    OptionalData "PCB Level:", Value$(73)
+  
+    OptionalData "Test Set Name Identification:", Value$(74)
+  
+    OptionalData "Phase to Phase Accuracy (1 to 2):", Value$(75)
+  
+    OptionalData "Phase to Phase Accuracy (2 to 3):", Value$(76)
+  
+    OptionalData "Phase to Phase Accuracy (3 to 1):", Value$(77)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print header record
+'============================================================================
+SUB PrintHeaderRecord
+'----------------------------------------------------------------------------
+    PrintaLine
+    PRINT #OutFile%, "Header Record"
+    PRINT #OutFile%, DecodeCompanyCode$(Value$(2))          ' Company Code
+    PRINT #OutFile%, "File Date:"; Value$(3)                ' Date
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print trailer record
+'============================================================================
+SUB PrintTrailerRecord
+'----------------------------------------------------------------------------
+    PrintaLine
+    Prtl "Trailer Record"
+    Prtl DecodeCompanyCode$(Value$(2))
+    IF VAL(Value$(3)) > 0 THEN
+        Prtl Value$(3) + " Test Records"
+    END IF
+    IF VAL(Value$(4)) > 0 THEN
+        Prtl Value$(4) + " Test/History Records"
+    END IF
+    IF VAL(Value$(5)) > 0 THEN
+        Prtl Value$(5) + " Physical Inventory Records"
+    END IF
+    IF VAL(Value$(6)) > 0 THEN
+        Prtl Value$(6) + " History Records"
+    END IF
+    IF VAL(Value$(7)) > 0 THEN
+        Prtl Value$(7) + " Transfer Records"
+    END IF
+    IF VAL(Value$(8)) > 0 THEN
+        Prtl Value$(8) + " Status Change Records"
+    END IF
+    IF VAL(Value$(9)) > 0 THEN
+        Prtl Value$(9) + " Battery Check Year Records"
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints data to device/file - no CR/LF
+'============================================================================
+SUB Prt (Work$)
+'----------------------------------------------------------------------------
+    PRINT #OutFile%, Work$;
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints data to device/file. Appends cr/lf
+'============================================================================
+SUB Prtl (Work$)
+'----------------------------------------------------------------------------
+    PRINT #OutFile%, Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints identification, then either data or missing message
+'============================================================================
+SUB RequiredData (Id$, Value$)
+'----------------------------------------------------------------------------
+    Prt Id$
+    IF LTRIM$(RTRIM$(Value$)) <> "" THEN
+        Prtl Value$
+    ELSE
+        DataMissing
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Decode retirement code
+'============================================================================
+FUNCTION RetireCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "01"
+            RetireCode$ = Pointer$ + " - Lost/Stolen"
+        CASE "02"
+            RetireCode$ = Pointer$ + " - Damaged"
+        CASE "03"
+            RetireCode$ = Pointer$ + " - Obsolete"
+        CASE "04"
+            RetireCode$ = Pointer$ + " - Defective"
+        CASE "05"
+            RetireCode$ = Pointer$ + " - Utility Plant Sold"
+        CASE ELSE
+            RetireCode$ = Pointer$ + " - Unknown retirement code"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Decode MDS transaction code
+'============================================================================
+FUNCTION TransactionCode$ (Pointer$)
+'----------------------------------------------------------------------------
+    SELECT CASE Pointer$
+        CASE "1"
+            TransactionCode$ = Pointer$ + " - Test Record"
+        CASE "2"
+            TransactionCode$ = Pointer$ + " - Test/History Record"
+        CASE "3"
+            TransactionCode$ = Pointer$ + " - Physical Inventory Record"
+        CASE "4"
+            TransactionCode$ = Pointer$ + " - History Record"
+        CASE "5"
+            TransactionCode$ = Pointer$ + " - Transfer Record"
+        CASE "6"
+            TransactionCode$ = Pointer$ + " - Status Change Record"
+        CASE "7"
+            TransactionCode$ = Pointer$ + " - Battery Check Year Record"
+        CASE ELSE
+            TransactionCode$ = Pointer$ + " - Unknown transaction code"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+

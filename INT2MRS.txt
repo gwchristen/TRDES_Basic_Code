@@ -1,0 +1,761 @@
+'   $title:'Int2Mrs - Decode Interface file to MRDESII format'
+'   Version 0.20
+'   K. W. Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'============================================================================
+'   Program development history (preceeding 12 months)
+'----------------------------------------------------------------------------
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Procedure Declarations
+'----------------------------------------------------------------------------
+DECLARE FUNCTION AreaCode$ (Work$, OffSet%)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB ProcBattChk (Buffer$)
+DECLARE SUB ProcHistory (Buffer$)
+DECLARE SUB ProcPhyInv (Buffer$)
+DECLARE SUB ProcStatChg (Buffer$)
+DECLARE SUB ProcTest (Buffer$)
+DECLARE SUB ProcTestHist (Buffer$)
+DECLARE SUB ProcTransfer (Buffer$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadDefFiles ()
+DECLARE FUNCTION ReadHeader% ()
+DECLARE FUNCTION UnRightSet$ (Value$, Dec%)
+DECLARE SUB WriteRecord (Record$)
+'============================================================================
+'   User record type declarations
+'----------------------------------------------------------------------------
+'   IntRec is used to define records for decode arrays which define where in
+'   a MRDES II or TRDES record the information will be found, and where in
+'   the interface record the information should be stored.
+    TYPE IntRec
+        IntPos AS INTEGER       ' Interface record datum position
+        IntLen AS INTEGER       ' Interface record datum length
+        Adec AS STRING * 1      ' Alpha or decimal places
+        MrsPos AS INTEGER       ' MRDES II record datum position
+        MrsLen AS INTEGER       ' MRDES II record datum length
+    END TYPE
+'----------------------------------------------------------------------------
+'   Information and housekeeping record.  Number of records in data file,
+'   process flag and create, edit and process dates.
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+        Process AS STRING * 1
+        Create AS STRING * 10
+        EditDate AS STRING * 10
+        ProcDate AS STRING * 10
+    END TYPE
+'----------------------------------------------------------------------------
+'   MRDES II data record access
+    TYPE DataRecord
+        Buffer AS STRING * 500
+    END TYPE
+'============================================================================
+'   Array dimension statements
+'----------------------------------------------------------------------------
+'   These arrays of records are used in the conversion process.  Each record
+'   instructs INTRFACE how to deal with a specific string in the GSL's
+'   internal format.
+    DIM SHARED Test(1 TO 80) AS IntRec
+    DIM SHARED TestHist(1 TO 80) AS IntRec
+    DIM SHARED PhyInv(1 TO 80) AS IntRec
+    DIM SHARED History(1 TO 80) AS IntRec
+    DIM SHARED Transfer(1 TO 80) AS IntRec
+    DIM SHARED StatChg(1 TO 80) AS IntRec
+    DIM SHARED BattChk(1 TO 80) AS IntRec
+'----------------------------------------------------------------------------
+'   These global integers are the number of records in each record array.
+    DIM SHARED Tst%, TstHst%, PhInv%, Hstry%
+    DIM SHARED Trnsfr%, Status%, Battery%, ToPrt%, Records%
+'----------------------------------------------------------------------------
+'   The global strings are used for record processing.
+'   Company$ -- Operating company AEP Company Code
+'   DataFile$ - Incoming data file drive/path
+'   Seal$ ----- Seal identification
+'   State$ ---- Postal State Code
+    DIM SHARED Company$, DataFile$, Seal$, State$
+'----------------------------------------------------------------------------
+'   File access record types
+    DIM SHARED Info AS InfoRecord, DataRec AS DataRecord
+'============================================================================
+'   Program begins
+'----------------------------------------------------------------------------
+    Programmer$ = "K.W.Kroninger"
+
+'   Version information only is obtained by calling the program with the
+'   command line: INT2MRS V
+'   Case doesn't matter.
+
+    IF LEFT$(UCASE$(LTRIM$(RTRIM$(COMMAND$))), 1) = "V" THEN
+        PRINT "MDS Interface Record to MRDES II Utility - Version 0.20"
+        END
+    END IF
+
+'   Check for network problem
+
+'    ON ERROR GOTO NetProblem
+
+'---------------------------------------------------------------------------
+    CLS
+
+'   Read data definition files
+
+    ReadDefFiles
+
+'   Call function to check for the presence of an MRDES II interface file and
+'   initialize one if none is found.  If the interface file exists, offer the
+'   operator the chance to cancel the process.
+
+    IF ReadHeader% = 1 THEN
+        END
+    END IF
+
+'----------------------------------------------------------------------------
+'   Processing code will go here
+'----------------------------------------------------------------------------
+    InFile% = FREEFILE
+    OPEN "MRS2MDS" FOR INPUT AS #InFile%
+    LINE INPUT #InFile%, Buffer$            ' Read header record. Discard
+    LINE INPUT #InFile%, Buffer$            ' Read trailer record. Discard
+
+'   Get and process the current record.
+
+    DO
+        LINE INPUT #InFile%, Buffer$        ' Get a record
+        SELECT CASE LEFT$(Buffer$, 1)
+            CASE "1"
+                ProcTest Buffer$
+            CASE "2"
+                ProcTestHist Buffer$
+            CASE "3"
+                ProcPhyInv Buffer$
+            CASE "4"
+                ProcHistory Buffer$
+            CASE "5"
+                ProcTransfer Buffer$
+            CASE "6"
+                ProcStatChg Buffer$
+            CASE "7"
+                ProcBattChk Buffer$
+        END SELECT
+    LOOP UNTIL EOF(InFile%)
+
+    CLOSE
+
+Split:
+    END
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+    IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+    ELSE
+        x& = TIMER + 10
+        DO
+        Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+    END IF
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of IntrFace.Bas main module
+'****************************************************************************
+
+'****************************************************************************
+'   Looks up Interface Record Division/Area code.
+'============================================================================
+FUNCTION AreaCode$ (Work$, OffSet%)
+'----------------------------------------------------------------------------
+    Area$ = MID$(Work$, OffSet% + 7, 1)
+    IF Area$ = "0" THEN
+        AreaCode$ = "009"
+    ELSE
+        AreaCode$ = Area$ + "10"
+    END IF
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Process battery check year records
+'============================================================================
+SUB ProcBattChk (InComing$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "7"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Battery%
+        IF BattChk(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, BattChk(c%).IntPos, BattChk(c%).IntLen)
+            IF VAL(BattChk(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(BattChk(c%).Adec))
+            END IF
+            MID$(Work$, BattChk(c%).MrsPos, BattChk(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process history records
+'============================================================================
+SUB ProcHistory (InComming$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "4"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Hstry%
+        IF History(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, History(c%).IntPos, History(c%).IntLen)
+            IF VAL(History(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(History(c%).Adec))
+            END IF
+            MID$(Work$, History(c%).MrsPos, History(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+    MID$(Work$, History(4).MrsPos, 1) = "7"
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process physical inventory records
+'============================================================================
+SUB ProcPhyInv (InComming$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "3"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO PhInv%
+        IF PhyInv(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, PhyInv(c%).IntPos, PhyInv(c%).IntLen)
+            IF VAL(PhyInv(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(PhyInv(c%).Adec))
+            END IF
+            MID$(Work$, PhyInv(c%).MrsPos, PhyInv(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+    MID$(Work$, PhyInv(PhInv%).MrsPos, 1) = "7"
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process status change records
+'============================================================================
+SUB ProcStatChg (InComming$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "6"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Status%
+        IF StatChg(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, StatChg(c%).IntPos, StatChg(c%).IntLen)
+            IF VAL(StatChg(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(StatChg(c%).Adec))
+            END IF
+            MID$(Work$, StatChg(c%).MrsPos, StatChg(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+    MID$(Work$, StatChg(Status%).MrsPos, 1) = "7"
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process test records
+'============================================================================
+SUB ProcTest (InComing$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "1"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Tst%
+        IF Test(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, Test(c%).IntPos, Test(c%).IntLen)
+            IF VAL(Test(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(Test(c%).Adec))
+            END IF
+            MID$(Work$, Test(c%).MrsPos, Test(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+    MID$(Work$, Test(Tst% - 1).MrsPos, 1) = "7"
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process test/history records
+'============================================================================
+SUB ProcTestHist (InComing$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "2"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO TstHst%
+        IF TestHist(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, TestHist(c%).IntPos, TestHist(c%).IntLen)
+            IF VAL(TestHist(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(TestHist(c%).Adec))
+            END IF
+            MID$(Work$, TestHist(c%).MrsPos, TestHist(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+    MID$(Work$, TestHist(TstHst%).MrsPos, 1) = "7"
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process transfer records
+'============================================================================
+SUB ProcTransfer (InComming$)
+'----------------------------------------------------------------------------
+
+'   Initialize work string
+
+    Work$ = SPACE$(500)
+
+'   Insert transaction code
+
+    MID$(Work$, 1, 1) = "5"
+
+'   This loop will do most of the work
+
+    FOR c% = 1 TO Trnsfr%
+        IF Transfer(c%).IntPos > 0 THEN
+            Temp$ = MID$(InComing$, Transfer(c%).IntPos, Transfer(c%).IntLen)
+            IF VAL(Transfer(c%).Adec) > 0 THEN
+                Temp$ = UnRightSet$(Temp$, VAL(Transfer(c%).Adec))
+            END IF
+            MID$(Work$, Transfer(c%).MrsPos, Transfer(c%).MrsLen) = Temp$
+        END IF
+    NEXT
+    MID$(Work$, Transfer(Trnsfr%).MrsPos, 1) = "7"
+    MID$(Work$, Transfer(Trnsfr%).MrsPos, 1) = "7"
+
+'   Write record
+
+    WriteRecord Work$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Subprogram to read interface record definition files into records
+'============================================================================
+SUB ReadDefFiles
+'----------------------------------------------------------------------------
+
+'   Find file definition path, read global strings
+
+    Proc% = FREEFILE
+    OPEN "ProcPath" FOR INPUT AS #Proc%
+    FOR x% = 1 TO 5
+        LINE INPUT #Proc%, DefPath$
+    NEXT
+    INPUT #Proc%, Company$, Seal$, State$
+    CLOSE #Proc%
+
+'   Format strings as necessary.  Company$ and State$ must be exactly two
+'   characters for MDS.
+
+    Company$ = LTRIM$(RTRIM$(Company$))
+    State$ = LTRIM$(RTRIM$(State$))
+
+'   If all is not well, inform operator, and suggest that processing is not
+'   a good idea.  Recommend exit, but allow the operator to press on if
+'   desired, though I can't imagine anyone actually continuing at this point.
+
+    IF LEN(Company$) <> 2 OR LEN(State$) <> 2 THEN
+        CLS
+        Cputs "Configuration file ERROR!", 10
+        IF LEN(Company$) <> 2 THEN
+            Cputs "Company ID code is NOT CORRECT! (" + Company$ + ")", 15
+        ELSE
+            Cputs "State code is NOT CORRECT! (" + State$ + ")", 15
+        END IF
+        Cputs "Correct processing CANNOT be assured with this condition.", 20
+        IF Get1Key$("CE", "C to continue, or E to exit.") = "E" THEN
+            END
+        END IF
+    END IF
+
+'   Operator information.  We'll put the version number on the screen all the
+'   time as there's no menu.
+
+    CLS
+    COLOR 15, 0
+    Cputs "ษออออออออออออออออออออออออออออออออออออออออออออออออออป", 3
+    FOR x% = 4 TO 8
+        Cputs "บ                                                  บ", x%
+    NEXT
+    Cputs "ศออออออออออออออออออออออออออออออออออออออออออออออออออผ", 9
+    COLOR 14, 0
+    Cputs "MDS Interface to MRDES II Utility - Version 0.20", 5
+    COLOR 15, 3
+    Cputs "Reading definition files", 7
+    COLOR 7, 0
+    LOCATE 11, 1
+
+'   Open DATAFILE, and find the screen filenames.
+
+    OPEN "DataFile" FOR INPUT AS #Proc%
+
+'   Skip past what we don't need.
+
+    FOR x% = 1 TO 7
+        LINE INPUT #Proc%, Junk$
+    NEXT
+
+'   Now we're to the information we need for processing.
+'----------------------------------------------------------------------------
+'   Test Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+'   Once again, skip what we don't need.  Such is the price of flexibility.
+'   Don't bother with  this information's format, just read it in as a string
+'   to skip past these lines.  The overall advantage of this system is that
+'   if changes are made in the MRDES II record, they are automatically sensed
+'   and the proper information is passed to the interface record.
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+'   At this point, we begin reading the real information.  The information we
+'   need for this task is mixed in with other information from the screen
+'   file, so what we don't need we read into junk variables, which effectively
+'   skips it.  All this is necessary as this program's information is
+'   combined with the screen files for MRDES II.
+
+    INPUT #Dpath%, Tst%         ' Number of records in screen file
+    FOR x% = 1 TO Tst%
+        INPUT #Dpath%, Junk1%, Junk2%, Test(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, Test(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Test(x%).Adec, Test(x%).IntPos, Test(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'----------------------------------------------------------------------------
+'   Test/History Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+    INPUT #Dpath%, TstHst%         ' Number of records in screen file
+    FOR x% = 1 TO TstHst%
+        INPUT #Dpath%, Junk1%, Junk2%, TestHist(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, TestHist(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, TestHist(x%).Adec, TestHist(x%).IntPos, TestHist(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'----------------------------------------------------------------------------
+'   Physical Inventory Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+    INPUT #Dpath%, PhInv%         ' Number of records in screen file
+    FOR x% = 1 TO PhInv%
+        INPUT #Dpath%, Junk1%, Junk2%, PhyInv(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, PhyInv(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, PhyInv(x%).Adec, PhyInv(x%).IntPos, PhyInv(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'----------------------------------------------------------------------------
+'   History Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+    INPUT #Dpath%, Hstry%         ' Number of records in screen file
+    FOR x% = 1 TO Hstry%
+        INPUT #Dpath%, Junk1%, Junk2%, History(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, History(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, History(x%).Adec, History(x%).IntPos, History(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'----------------------------------------------------------------------------
+'   Transfer Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+    INPUT #Dpath%, Trnsfr%         ' Number of records in screen file
+    FOR x% = 1 TO Trnsfr%
+        INPUT #Dpath%, Junk1%, Junk2%, Transfer(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, Transfer(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Transfer(x%).Adec, Transfer(x%).IntPos, Transfer(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'----------------------------------------------------------------------------
+'   Status Change Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+    INPUT #Dpath%, Status%         ' Number of records in screen file
+    FOR x% = 1 TO Status%
+        INPUT #Dpath%, Junk1%, Junk2%, StatChg(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, StatChg(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, StatChg(x%).Adec, StatChg(x%).IntPos, StatChg(x%).IntLen
+    NEXT
+    CLOSE #Dpath%
+'----------------------------------------------------------------------------
+'   Battery Check Record
+
+    INPUT #Proc%, FileName$
+
+'   Get another file buffer
+
+    Dpath% = FREEFILE
+
+    PRINT TAB(20); "Reading definition file: "; FileName$
+
+    OPEN DefPath$ + FileName$ + ".SCN" FOR INPUT AS #Dpath%
+
+    INPUT #Dpath%, Prompt%, Prompt$
+    FOR x% = 1 TO Prompt%
+        LINE INPUT #Dpath%, Prompt$
+    NEXT
+
+    INPUT #Dpath%, Battery%         ' Number of records in screen file
+    FOR x% = 1 TO Battery%
+        INPUT #Dpath%, Junk1%, Junk2%, BattChk(x%).MrsLen
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$, BattChk(x%).MrsPos
+        INPUT #Dpath%, Junk1%, Junk2%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, Junk$
+        INPUT #Dpath%, BattChk(x%).Adec, BattChk(x%).IntPos, BattChk(x%).IntLen
+    NEXT
+    CLOSE
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Check for existing interface record file, inform operator if none exists.
+'============================================================================
+FUNCTION ReadHeader%
+'----------------------------------------------------------------------------
+
+    Hdr% = FREEFILE
+
+'   Is there a file there?
+
+    OPEN "MRS2MDS" FOR BINARY AS #Hdr%
+    Work& = LOF(Hdr%)
+    CLOSE #Hdr%
+    IF Work& = 0 THEN
+        CLS
+        KILL "MRS2MDS"
+        ReadHeader% = 1
+        EXIT FUNCTION
+    END IF
+
+'   All is well.  Return code.
+
+    ReadHeader% = 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Converts string from right set to normal integer period decimal format.
+'============================================================================
+FUNCTION UnRightSet$ (Value$, Dec%)
+'----------------------------------------------------------------------------
+    Integer$ = LEFT$(Value$, LEN(Value$) - Dec%)
+    Decimal$ = RIGHT$(Value$, Dec%)
+    IF Decimal$ = STRING$(Dec%, "0") THEN
+        Decimal$ = "0"
+    END IF
+    UnRightSet$ = LTRIM$(STR$(VAL(Integer$))) + "." + Decimal$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Opens file, appends record, closes file.
+'============================================================================
+SUB WriteRecord (Record$)
+'----------------------------------------------------------------------------
+    Wrt% = FREEFILE
+    OPEN "MRDES.DAT" FOR RANDOM AS #Wrt% LEN = LEN(DataRec)
+    GET #Wrt%, 1, Info
+    IF Info.NumberOfRecords = 0 THEN
+        Info.Process = "U"
+        Info.Create = DATE$
+        Info.EditDate = DATE$
+    END IF
+    PRINT LEFT$(Record$, 70)
+    Info.NumberOfRecords = Info.NumberOfRecords + 1
+    DataRec.Buffer = Record$
+    PUT #Wrt%, Info.NumberOfRecords + 1, DataRec
+    PUT #Wrt%, 1, Info
+    CLOSE #Wrt%
+'****************************************************************************
+END SUB
+

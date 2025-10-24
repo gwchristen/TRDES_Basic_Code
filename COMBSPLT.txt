@@ -1,0 +1,34 @@
+'   $title:'Combine/Split MDS transfer files'
+'   Ken Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Canton, OH
+'   version 0.1
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1998
+'       First test release
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+'============================================================================
+'   Delcare record types
+'----------------------------------------------------------------------------
+    TYPE RecordType
+        FileName AS STRING * 2
+        t1 AS LONG
+        t2 AS LONG
+        t3 AS LONG
+        t4 AS LONG
+        t5 AS LONG
+        t6 AS LONG
+        t7 AS LONG
+    END TYPE
+'============================================================================
+'   Dimension arrays, record types, etc.
+'----------------------------------------------------------------------------
+    DIM SHARED RecType(10) AS RecordType    ' Make this one global
+    DIM FileNames(100)                      ' We'll allow up to 100 files
+'============================================================================
+

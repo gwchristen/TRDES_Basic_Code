@@ -1,0 +1,451 @@
+'   $title:'SCRNLIST - MRDES II Screen Definition File List Utility'
+'   Version 1.21
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   September, 1992
+'       Removed redundant parameter pass to ProcessDataField
+'============================================================================
+'   This utility will list the various components of a screen definition file
+'   and their effects.
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB FileDateTime (DateValue%, TimeValue%, Work$)
+DECLARE SUB ProcessDataField ()
+DECLARE SUB PromptProcess ()
+DECLARE SUB TheLastFive (Value%)
+'============================================================================
+
+' Define the type needed for INTERRUPT
+
+    TYPE RegType
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+    END TYPE
+'----------------------------------------------------------------------------
+   TYPE Register                      'Type for CALL Interrupt
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+        Ds    AS INTEGER
+        es    AS INTEGER
+   END TYPE
+    DIM SHARED InFile%, OutFile%
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+
+    CLS
+   
+'   If no filename is specified on the command line, give help information
+'   and exit.
+
+    IF LTRIM$(RTRIM$(COMMAND$)) = "" THEN
+        PRINT "MRDES II Screen Definition File List Utility - Version 1.21"
+        PRINT "USEAGE: SCRNLIST [path]<screen filename>[.scn]"
+        END
+    END IF
+
+'   Get the input filename from the command line.  Check for extension
+
+    FileName$ = UCASE$(LTRIM$(RTRIM$(COMMAND$)))
+    Period% = INSTR(FileName$, ".")
+   
+'   If there's no extension, append the .SCN extension for the input filename
+'   and the .RPT extension for the report file.
+
+    IF Period% = 0 THEN
+        InFile$ = FileName$ + ".SCN"
+        OutFile$ = FileName$ + ".RPT"
+    ELSE
+      
+'   If an extension was specified, remove it for the report heading and to
+'   generate the report filename.
+
+        InFile$ = FileName$
+        FileName$ = LEFT$(FileName$, Period% - 1)
+        OutFile$ = FileName$ + ".RPT"
+    END IF
+   
+    SHELL "dir >scrnlist.!!!"
+    InFile% = FREEFILE
+    OPEN "scrnlist.!!!" FOR INPUT AS #InFile%
+    Junk$ = LEFT$(InFile$, INSTR(InFile$, ".") - 1)
+    DO
+        LINE INPUT #InFile%, Work$
+        Work$ = UCASE$(Work$)
+    LOOP UNTIL EOF(InFile%) OR INSTR(Work$, Junk$) > 0
+    CLOSE
+    KILL "scrnlist.!!!"
+   
+    Work$ = LTRIM$(MID$(Work$, INSTR(Work$, CHR$(32))))
+    Work$ = LTRIM$(MID$(Work$, INSTR(Work$, CHR$(32))))
+    Work$ = RTRIM$(LEFT$(Work$, INSTR(Work$, CHR$(32))))
+  
+
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    OutFile% = FREEFILE
+    OPEN OutFile$ FOR OUTPUT AS #OutFile%
+
+    CLS
+    PRINT "Report for screen file: "; FileName$
+    PRINT #OutFile%, "Report for screen file: "; FileName$
+    PRINT
+    PRINT #OutFile%,
+   
+    PRINT "Report date:"; DATE$; "   Report Time:"; TIME$
+    PRINT #OutFile%, "Report date:"; DATE$; "   Report Time:"; TIME$
+
+    DIM InRegs AS RegType, OutRegs AS RegType
+   
+    InRegs.Ax = &H5700
+    InRegs.Bx = FILEATTR(InFile%, 2)
+    CALL INTERRUPT(&H21, InRegs, OutRegs)
+    FileDateTime OutRegs.Dx, OutRegs.Cx, Work$
+    PRINT
+    PRINT #OutFile%,
+
+    INPUT #InFile%, Prompt%, Title$
+    PRINT "Screen title: "; Title$
+    PRINT
+    PRINT USING "### total screen prompts and messages"; Prompt%
+    PRINT
+    PRINT #OutFile%, "Screen title: "; Title$
+    PRINT #OutFile%,
+    PRINT #OutFile%, USING "### total screen prompts and messages"; Prompt%
+    PRINT #OutFile%,
+   
+'   Subprogram handles the input, testing and reports for messages.
+
+    FOR Counter% = 1 TO Prompt%
+        PromptProcess
+    NEXT
+
+    INPUT #InFile%, Value%
+   
+    PRINT
+    PRINT USING "### total data entry/edit fields"; Value%
+    PRINT
+
+    PRINT #OutFile%,
+    PRINT #OutFile%, USING "### total data entry/edit fields"; Value%
+    PRINT #OutFile%,
+   
+'   Subprogram handles the input, testing and reports for data fields.
+
+    FOR Counter% = 1 TO Value%
+        ProcessDataField
+    NEXT
+
+'   Series full load as found and date fields and date/time stamp flag
+    TheLastFive (Value%)
+
+    PRINT
+    PRINT
+    PRINT "Report complete"
+   
+    PRINT #OutFile%,
+    PRINT #OutFile%,
+    PRINT #OutFile%, "Report complete"
+   
+    CLOSE
+'****************************************************************************
+'   End of Scrnlist.Bas main module
+'****************************************************************************
+
+'****************************************************************************
+'   This procedure decodes and prints the file date/time stamp
+'============================================================================
+SUB FileDateTime (DateValue%, TimeValue%, Work$)
+'----------------------------------------------------------------------------
+    Year% = DateValue% / 512 + 1979
+    Month% = (DateValue% AND 480) / 32
+    Day% = DateValue% AND 31
+
+    Hour% = TimeValue% / 2048
+    Minute% = (TimeValue% AND 2016) / 32
+
+    IF Hour% > 11 THEN
+        AmPm$ = " PM"
+        Hour% = Hour% - 12
+    ELSE
+        AmPm$ = " AM"
+    END IF
+   
+    IF Hour% = 0 THEN
+        Hour% = 12
+    END IF
+    
+    Month$ = RIGHT$("0" + LTRIM$(RTRIM$(STR$(Month%))), 2)
+    Day$ = RIGHT$("0" + LTRIM$(RTRIM$(STR$(Day%))), 2)
+    Hour$ = RIGHT$("0" + LTRIM$(RTRIM$(STR$(Hour%))), 2)
+    Minute$ = RIGHT$("0" + LTRIM$(RTRIM$(STR$(Minute%))), 2)
+
+
+    FileDate$ = Month$ + "-" + Day$ + "-" + LTRIM$(RTRIM$(STR$(Year%)))
+    FileTime$ = Hour$ + ":" + Minute$ + AmPm$
+
+    PRINT
+    PRINT #OutFile%,
+
+    PRINT "Screen definition file date:"; FileDate$
+    PRINT #OutFile%, "Screen definition file date:"; FileDate$
+    PRINT "Screen definition file time:"; FileTime$
+    PRINT #OutFile%, "Screen definition file time:"; FileTime$
+    PRINT "Screen definition file size:"; Work$; " bytes"
+    PRINT #OutFile%, "Screen definition file size:"; Work$; " bytes"
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Procedure to input, test and print data entry/edit field information
+'============================================================================
+SUB ProcessDataField
+'----------------------------------------------------------------------------
+  
+'   Get the data field information from the file
+
+    INPUT #InFile%, Vline%, Vcol%, Vlen%, Fwd%, Bwd%, Help$
+    INPUT #InFile%, RecLoc%, ReInit%, NonSpc%, Default$, Align$
+    INPUT #InFile%, FieldName$, MdsAlign$, IntLoc%, IntLen%
+
+    PRINT "Data entry/edit field identifer: "; FieldName$
+    PRINT #OutFile%, "Data entry/edit field identifer: "; FieldName$
+   
+    PRINT TAB(5); USING "Screen Location: line ###, column ###, length ###"; ABS(Vline%); Vcol%; Vlen%
+    PRINT #OutFile%, TAB(5); USING "Screen Location: line ###, column ###, length ###"; ABS(Vline%); Vcol%; Vlen%
+    
+'   Display and allow edit of the field?
+
+    IF Vline% < 1 THEN
+        PRINT TAB(5); "Defined not to be displayed"
+        PRINT #OutFile%, TAB(5); "Defined not to be displayed"
+    END IF
+  
+    Vline% = ABS(Vline%)
+  
+'   Error check for screen location
+
+    IF Vline% < 1 OR Vline% > 24 THEN
+        PRINT TAB(10); "Screen line number error!"
+        PRINT #OutFile%, TAB(10); "Screen line number error!"
+    END IF
+
+    IF Vcol% < 1 OR Vcol% > 79 THEN
+        PRINT TAB(10); "Screen column number error!"
+        PRINT #OutFile%, TAB(10); "Screen column number error!"
+    END IF
+
+    PRINT TAB(5); USING "Links: Forward ###, Backward ###"; Fwd%; Bwd%
+    PRINT #OutFile%, TAB(5); USING "Links: Forward ###, Backward ###"; Fwd%; Bwd%
+        
+    PRINT TAB(5); "Help filename: "; Help$
+    PRINT #OutFile%, TAB(5); "Help filename: "; Help$
+    
+    PRINT TAB(5); "MRDES II record location: "; RecLoc%
+    PRINT #OutFile%, TAB(5); "MRDES II record location: "; RecLoc%
+   
+'   Is its record location and length possible?
+
+    IF RecLoc% < 1 OR RecLoc% + Vlen% > 500 THEN
+        PRINT TAB(10); "Location or length error"
+        PRINT #OutFile%, TAB(10); "Location or length error"
+    END IF
+
+'   Reinit between entry screens?  If so, do we supply data?  What is it?
+
+    SELECT CASE ReInit%
+        CASE 0
+            PRINT TAB(5); "Field is not reinitialized between entry records"
+            PRINT #OutFile%, TAB(5); "Field is not reinitialized between entry records"
+        CASE 1
+            PRINT TAB(5); "Field is reinitialized to spaces between entry records"
+            PRINT #OutFile%, TAB(5); "Field is reinitialized to spaces between entry records"
+        CASE 2
+            PRINT TAB(5); "Field is reinitialized to "; Default$; " between entry records"
+            PRINT #OutFile%, TAB(5); "Field is reinitialized to "; Default$; " between entry records"
+    END SELECT
+
+    IF NonSpc% > 0 THEN
+        PRINT TAB(5); USING "At least ## non space characters required"; NonSpc%
+        PRINT #OutFile%, TAB(5); USING "At least ## non space characters required"; NonSpc%
+    END IF
+
+    PRINT TAB(5); "Default data for this field (entry mode): "; Default$
+    PRINT #OutFile%, TAB(5); "Default data for this field (entry mode): "; Default$
+
+    Align$ = UCASE$(LTRIM$(RTRIM$(Align$)))
+    IF Align$ <> "" THEN
+        SELECT CASE Align$
+            CASE "0"
+                PRINT TAB(5); "Data is rounded to integer, left set in field"
+                PRINT #OutFile%, TAB(5); "Data is rounded to integer, left set in field"
+            CASE "1"
+                PRINT TAB(5); "Data is rounded to tenths, left set in field"
+                PRINT #OutFile%, TAB(5); "Data is rounded to tenths, left set in field"
+            CASE "2"
+                PRINT TAB(10); "Data is rounded to hundreths, left set in field"
+                PRINT #OutFile%, TAB(10); "Data is rounded to hundreths, left set in field"
+            CASE "A"
+                PRINT TAB(10); "Activity code field"
+                PRINT #OutFile%, TAB(10); "Activity code field"
+            CASE "I"
+                PRINT TAB(5); "No MRDES II data formatting"
+                PRINT #OutFile%, TAB(5); "No MRDES II data formatting"
+            CASE "L"
+                PRINT TAB(5); "Data is left set in field"
+                PRINT #OutFile%, TAB(5); "Data is left set in field"
+            CASE "L0"
+                PRINT TAB(5); "Data is left set in field, leading zeros removed"
+                PRINT #OutFile%, TAB(5); "Data is left set in field, leading zeros removed"
+            CASE "M"
+                PRINT TAB(10); "Manufacturer code field"
+                PRINT #OutFile%, TAB(10); "Manufacturer code field"
+            CASE "P"
+                PRINT TAB(5); "Purchase code lookup field"
+                PRINT #OutFile%, TAB(5); "Purchase code lookup field"
+            CASE "R"
+                PRINT TAB(5); "Data is right set in field"
+                PRINT #OutFile%, TAB(5); "Data is right set in field"
+            CASE "R0"
+                PRINT TAB(5); "Data is right set in field, leading zeros prefixed as needed"
+                PRINT #OutFile%, TAB(5); "Data is right set in field, leading zeros prefixed as needed"
+            CASE "RT"
+                PRINT TAB(10); "Retire code field"
+                PRINT #OutFile%, TAB(10); "Retire code field"
+            CASE ELSE
+                PRINT TAB(10); "Data format error! Align string = "; Align$
+                PRINT #OutFile%, TAB(10); "Data format error! Align string = "; Align$
+        END SELECT
+    END IF
+
+    MdsAlign$ = UCASE$(LTRIM$(RTRIM$(MdsAlign$)))
+    IF MdsAlign$ <> "" THEN
+        PRINT TAB(5); "MDS interface alignment string: "; MdsAlign$
+        PRINT #OutFile%, TAB(5); "MDS interface alignment string: "; MdsAlign$
+    ELSE
+        PRINT TAB(5); "No MDS interface alignment string defined."
+        PRINT #OutFile%, TAB(5); "No MDS interface alignment string defined."
+    END IF
+
+    PRINT TAB(5); "Data MDS interface record location: "; IntLoc%
+    PRINT #OutFile%, TAB(5); "Data MDS interface record location: "; IntLoc%
+    PRINT TAB(5); "Data MDS interface record length"; IntLen%
+    PRINT #OutFile%, TAB(5); "Data MDS interface record length"; IntLen%
+   
+    PRINT
+    PRINT #OutFile%,
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process Prompt string
+'============================================================================
+SUB PromptProcess
+'----------------------------------------------------------------------------
+
+    INPUT #InFile%, Pline%, Pcol%, Prompt$
+   
+    PRINT "Screen prompt/message: "; Prompt$
+    PRINT TAB(5); USING "Screen location: line ##, column ##"; ABS(Pline%); Pcol%
+   
+    PRINT #OutFile%, "Screen prompt/message: "; Prompt$
+    PRINT #OutFile%, TAB(5); USING "Screen location: line ##, column ##"; ABS(Pline%); Pcol%
+   
+    IF Pline% < 0 THEN
+        PRINT TAB(5); "Defined not to be displayed"
+        PRINT #OutFile%, TAB(5); "Defined not to be displayed"
+    END IF
+   
+    Pline% = ABS(Pline%)
+   
+    IF Pline% < 1 OR Pline% > 24 THEN
+        PRINT TAB(10); "Screen line number error!"
+        PRINT #OutFile%, TAB(10); "Screen line number error!"
+    END IF
+
+    IF Pcol% < 1 OR Pcol% > 79 THEN
+        PRINT TAB(10); "Screen column number error!"
+        PRINT #OutFile%, TAB(10); "Screen column number error!"
+    END IF
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Handles Series full load as found, date location and time stamp variables
+'============================================================================
+SUB TheLastFive (Value%)
+'----------------------------------------------------------------------------
+   
+    PRINT
+    PRINT #OutFile%,
+    PRINT
+    PRINT #OutFile%,
+    INPUT #InFile%, Sfl%, Dt%, Stamp%, Area1%, Area2%
+
+    IF Sfl% = 0 THEN
+        PRINT "No series full load as found data field defined"
+        PRINT #OutFile%, "No series full load as found data field defined"
+    ELSE
+        PRINT USING "Series full load as found data field defined as ###"; Sfl%
+        PRINT #OutFile%, USING "Series full load as found data field defined as ###"; Sfl%
+        IF Sfl% < 0 OR Sfl% > Value% THEN
+            PRINT TAB(10); "Error in series full load as found data field"
+            PRINT #OutFile%, TAB(10); "Error in series full load as found data field"
+        END IF
+    END IF
+
+    IF Dt% = 0 THEN
+        PRINT "No date data field defined"
+        PRINT #OutFile%, "No date data field defined"
+    ELSE
+        PRINT USING "Date data field defined as ###"; Dt%
+        PRINT #OutFile%, USING "Date data field defined as ###"; Dt%
+        IF Dt% < 0 OR Dt% > Value% THEN
+            PRINT TAB(10); "Error in date data field"
+            PRINT #OutFile%, TAB(10); "Error in date data field"
+        END IF
+    END IF
+   
+    SELECT CASE Stamp%
+        CASE 0
+            PRINT "Time stamp neither used or preserved"
+            PRINT #OutFile%, "Time stamp neither used or preserved"
+        CASE 1
+            PRINT "Both entry and edit mode records date/time stamped"
+            PRINT #OutFile%, "Both entry and edit mode records date/time stamped"
+        CASE 2
+            PRINT "Entry fields date/time stamped,"
+            PRINT "Edit preserves date/time stamp."
+            PRINT #OutFile%, "Entry fields date/time stamped,"
+            PRINT #OutFile%, "Edit preserves date/time stamp."
+    END SELECT
+
+    PRINT
+    PRINT USING "First division/area data entry/edit field pointer: ###"; Area1%
+    PRINT USING "Second division/area data entry/edit field pointer: ###"; Area2%
+    PRINT #OutFile%,
+    PRINT #OutFile%, USING "First division/area data entry/edit field pointer: ###"; Area1%
+    PRINT #OutFile%, USING "Second division/area data entry/edit field pointer: ###"; Area2%
+
+'****************************************************************************
+END SUB
+

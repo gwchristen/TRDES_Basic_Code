@@ -1,0 +1,38 @@
+DECLARE FUNCTION ParseCmdLine% (Cline$())
+    DIM Cline$(20)
+    CLS
+    PRINT LTRIM$(RTRIM$(COMMAND$))
+    Count% = ParseCmdLine%(Cline$())
+    IF Count% > 0 THEN
+        FOR x% = 1 TO Count%
+            PRINT x%; " - "; Cline$(x%)
+        NEXT
+    ELSE
+        PRINT "No command line args"
+    END IF
+
+'****************************************************************************
+'   Parses command line, puts argvs in string array Cline$, returns argc.
+'============================================================================
+FUNCTION ParseCmdLine% (Argv$())
+'----------------------------------------------------------------------------
+    Argc% = 0
+    Work$ = LTRIM$(COMMAND$) + SPACE$(5)
+    IF LTRIM$(RTRIM$(Work$)) = "" THEN
+        ParseCmdLine% = 0
+        EXIT FUNCTION
+    END IF
+    WHILE LTRIM$(RTRIM$(Work$)) > ""
+        Argc% = Argc% + 1
+        c$ = LEFT$(Work$, 1)
+        Work$ = MID$(Work$, 2)
+        WHILE INSTR(CHR$(9) + CHR$(32), c$) = 0
+            Argv$(Argc%) = Argv$(Argc%) + c$
+            c$ = LEFT$(Work$, 1)
+            Work$ = MID$(Work$, 2)
+        WEND
+    WEND
+    ParseCmdLine% = Argc%
+'****************************************************************************
+END FUNCTION
+

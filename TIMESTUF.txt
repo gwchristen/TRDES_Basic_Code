@@ -1,0 +1,64 @@
+'   Time calculation routines
+'   Ken Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Version 0.10
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1998
+'       Started
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION CalcSeconds& (TheTime$)
+DECLARE FUNCTION CvtSeconds2HMS$ (Seconds&)
+DECLARE FUNCTION TimeDifference$ (Start$, Finish$)
+'============================================================================
+
+'****************************************************************************
+'   Calculates number of seconds from time passed as hh:mm:ss string
+'============================================================================
+FUNCTION CalcSeconds& (TheTime$)
+'----------------------------------------------------------------------------
+    Hr& = VAL(LEFT$(TheTime$, 2))
+    Mn& = VAL(MID$(TheTime$, 4, 2))
+    Sc& = VAL(MID$(TheTime$, 7, 2))
+    CalcSeconds& = Hrs& * 3600 + Mins& * 60 + Secs&
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Converts number of seconds into hh:mm:ss string.  Not the world's most
+'   complicated task.
+'============================================================================
+FUNCTION CvtSeconds2HMS$ (Seconds&)
+'----------------------------------------------------------------------------
+    Hh$ = RIGHT$("00" + LTRIM$(STR$(Seconds& \ 3600)), 2)
+    Seconds& = Seconds& MOD 3600
+    Mm$ = RIGHT$("00" + LTRIM$(STR$(Seconds& \ 60)), 2)
+    Sc$ = RIGHT$(LTRIM$(STR$(Seconds& MOD 60)), 2)
+    CvtSeconds2HMS$ = Hh$ + ":" + Mm$ + ":" + Sc$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Function to calculate differences in two times, passed as hh:mm:ss
+'   strings, returns difference as string in same format.
+'============================================================================
+FUNCTION TimeDifference$ (Start$, Finish$)
+'----------------------------------------------------------------------------
+ 
+'   Start by calculating seconds values for start and stop
+
+    StartTime& = CalcSeconds&(Start$)
+
+    FinishTime& = CalcSeconds&(Finish$)
+
+'   Calc difference in seconds
+
+    TimeDifference$ = CvtSeconds2HMS$(FinishTime& - StartTime&)
+
+'****************************************************************************
+END FUNCTION
+

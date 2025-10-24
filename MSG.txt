@@ -1,0 +1,23 @@
+IF LTRIM$(RTRIM$(COMMAND$)) <> "" THEN
+    SHELL "net send \\" + COMMAND$
+    END
+END IF
+CLS
+PRINT TAB(20); "USEAGE:  MSG (computer name) (msg)"
+PRINT TAB(5); "Where (computer name) is the computer's network name, and"
+PRINT TAB(5); "@echo (msg) is the message to be sent.  Enclose message in quotes."
+PRINT
+PRINT TAB(10); "@echo Currently defined computers:"
+PRINT
+PRINT TAB(10); "4311 - Tech computer"
+PRINT TAB(10); "4312 - Cavern computer (Ken)"
+PRINT TAB(10); "B1 --- Standard room computer"
+PRINT TAB(10); "3049 - Cavern computer (Tech RFL test board)"
+PRINT TAB(10); "2976 - Transformer area (Greg Rodak)"
+PRINT TAB(10); "4313 - Demand area computer (Al)"
+PRINT TAB(10); "4314 - RFL-2 test board"
+PRINT TAB(10); "4315 - Office computer (Sue/Don)"
+PRINT TAB(10); "4316 - RFL-3 test board"
+PRINT TAB(10); "4317 - RFL-1 test board"
+PRINT TAB(10); "33152 - Tech area (The Pentium)"
+

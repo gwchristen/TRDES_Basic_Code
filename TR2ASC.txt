@@ -1,0 +1,20 @@
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+    END TYPE
+    TYPE DataRecord
+        Buffer AS STRING * 1000
+    END TYPE
+
+    DIM InfoRec AS InfoRecord, DataRec AS DataRecord
+
+    InFile% = FREEFILE
+    OPEN "trsdat.dat" FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+    OutFile% = FREEFILE
+    OPEN "Trdes.asc" FOR OUTPUT AS #OutFile%
+    GET #InFile%, 1, InfoRec
+    FOR c% = 1 TO InfoRec.NumberOfRecords
+        GET #InFile%, c% + 1, DataRec
+        PRINT #OutFile%, DataRec.Buffer
+    NEXT
+    CLOSE
+

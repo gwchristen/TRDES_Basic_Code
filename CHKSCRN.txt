@@ -1,0 +1,267 @@
+'   $title:'CHKSCRN - MRDES II Screen Check Utility'
+'   Version 1.30
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   September, 1993
+'       Added message line information
+'   October, 1993
+'       Added data field fill option
+'   January, 1994
+'       Corrected filename error
+'============================================================================
+'   Declare Procedures
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, Length%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB Hlp ()
+DECLARE SUB InitStrings ()
+DECLARE SUB LoadScrn (FileName$)
+DECLARE SUB PrintScreen ()
+DECLARE SUB PutXY (Row%, Column%, Message$)
+'============================================================================
+'   Dimension arrays
+'----------------------------------------------------------------------------
+	Items% = 100
+	DIM Align$(Items%), Bwd%(Items%), Cfg%(10), Days$(6), Default$(Items%)
+	DIM Divs$(25, 1), Eflag%(Items%), Estring$(Items%), Fwd%(Items%)
+	DIM Help$(Items%), NonSpc%(Items%), Pcol%(Items%), Pline%(Items%)
+	DIM Prompt$(Items%), RecPos%(Items%), Rinit%(Items%), Scn$(20)
+	DIM Value$(Items%), Vcol%(Items%), Vlen%(Items%), Vline%(Items%)
+'============================================================================
+'   Version number
+'----------------------------------------------------------------------------
+	Version$ = "Version 1.30"
+	Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   Just checking for version number
+'----------------------------------------------------------------------------
+	IF UCASE$(LTRIM$(RTRIM$(COMMAND$))) = "V" THEN
+		PRINT "CHKSCRN - MRDES II Screen Check Utility - "; Version$
+		END
+	END IF
+'============================================================================
+	FileName$ = LTRIM$(RTRIM$(COMMAND$))
+	IF FileName$ = "" THEN
+		PRINT "Useage: CHKSCRN <filename>"
+		PRINT "where <filename> is the screen filename to be checked"
+		PRINT "(.scn extension)"
+		END
+	END IF
+	SCREEN , , 1
+	CLS
+	LoadScrn FileName$
+ClearEm:
+	InitStrings
+PrintEm:
+	PrintScreen
+	Cputs "This is the error/status message line", 24
+	x$ = Get1Key$(CHR$(13) + CHR$(27) + " CFHNPU", "Press Enter, Esc or Space to exit")
+	SELECT CASE x$
+		CASE "F"
+			FOR Counter% = 1 TO Value%
+				Value$(Counter%) = STRING$(Vlen%(Counter%), "0")
+			NEXT
+			GOTO PrintEm
+		CASE "C"
+			GOTO ClearEm
+		CASE "H"
+			Hlp
+			GOTO PrintEm
+		CASE "N"
+			FOR Counter% = 1 TO Value%
+				c$ = LTRIM$(RTRIM$(STR$(Counter%)))
+				Value$(Counter%) = LEFT$(c$ + STRING$(Vlen%(Counter%), "_"), Vlen%(Counter%))
+			NEXT
+			GOTO PrintEm
+		CASE "P"
+			WIDTH "LPT1:", 85
+			w$ = "+--------------------------------------------------------------------------------+"
+			LPRINT w$
+			FOR Row% = 1 TO 25
+				w$ = "|"
+				FOR Column% = 1 TO 80
+					w$ = w$ + CHR$(SCREEN(Row%, Column%))
+				NEXT
+				w$ = w$ + "|"
+				LPRINT w$
+			NEXT
+			w$ = "+--------------------------------------------------------------------------------+"
+			LPRINT w$
+			GOTO PrintEm
+		CASE "U"
+			FOR Counter% = 1 TO Value%
+				Value$(Counter%) = STRING$(Vlen%(Counter%), "_")
+			NEXT
+			GOTO PrintEm
+	END SELECT
+	CLS
+'****************************************************************************
+'   End of CHKSCRN.Bas
+'****************************************************************************
+
+'****************************************************************************
+'   Help procedure
+'============================================================================
+SUB Hlp
+'----------------------------------------------------------------------------
+	SCREEN , , 1, 1
+	CLS
+	DrawMenuBox 1, 24, 3, 0, 77
+	Cputs "MRDES II Screen Check Utility Help Screen", 2
+	RowOffSet% = 8
+	ColumnOffSet% = 14
+	PutXY RowOffSet%, ColumnOffSet%, "C - Clear screen to what MRDES operator will see"
+	PutXY RowOffSet% + 2, ColumnOffSet%, "F - Fill all data fields with zeros"
+	PutXY RowOffSet% + 4, ColumnOffSet%, "H - This help screen"
+	PutXY RowOffSet% + 6, ColumnOffSet%, "N - Number data fields"
+	PutXY RowOffSet% + 8, ColumnOffSet%, "P - Print screen"
+	PutXY RowOffSet% + 10, ColumnOffSet%, "U - Underline data fields"
+	x$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), "Press Enter, Esc or Space to exit")
+	SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Initialize subprogram.  Init data array as directed by the following:
+'       Rinit%(x%)=0 - Initialize element to spaces
+'       Rinit%(x%)=1 - Initialize element to spaces
+'       Rinit%(x%)=2 - Init element to supplied data in Default$()
+'============================================================================
+SUB InitStrings
+'----------------------------------------------------------------------------
+
+'   Borrow needed information from main module
+
+	SHARED DateLoc%, Default$(), Rinit%(), Value$(), Value%, Vlen%()
+
+'   Initialize array elements as directed by value of Rinit%()
+
+	FOR x% = 1 TO Value%
+		IF LTRIM$(RTRIM$(Default$(x%))) <> "" THEN
+			Value$(x%) = LEFT$(Default$(x%) + SPACE$(Vlen%(x%)), Vlen%(x%))
+		ELSE
+			Value$(x%) = SPACE$(Vlen%(x%))
+		END IF
+	NEXT
+
+'   Initialize date to the computer's current date, if desired.
+ 
+	IF DateLoc% > 0 THEN
+		Value$(DateLoc%) = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+	END IF
+
+	TimeStamp$ = SPACE$(16)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Load the screen arrays.  This subroutine opens the selected screen file,
+'   then reads in all information necessary to process that screen.
+'============================================================================
+SUB LoadScrn (FileName$)
+'----------------------------------------------------------------------------
+
+'   Borrow what we need from the main module.
+
+	SHARED Align$(), Bwd%(), DateLoc%, Default$(), Eflag%()
+	SHARED Estring$(), Fwd%(), Help$(), NonSpc%(), Pcol%(), Pline%()
+	SHARED Prompt$(), Prompt%, RecPos%(), Rinit%()
+	SHARED Title$, Value$(), Value%, Vcol%(), Vlen%(), Vline%()
+   
+	IF INSTR(FileName$, ".") = 0 THEN
+		FileName$ = FileName$ + ".SCN"
+	END IF
+	ScnPth% = FREEFILE
+	OPEN FileName$ FOR INPUT AS #ScnPth%
+
+'   Number of screen prompts and screen title
+
+	INPUT #ScnPth%, Prompt%, Title$
+
+'   Get the prompt information
+
+	FOR x% = 1 TO Prompt%
+		INPUT #ScnPth%, Pline%(x%), Pcol%(x%), Prompt$(x%)
+	NEXT
+
+'   Number of data fields
+
+	INPUT #ScnPth%, Value%
+
+'   Screen information for data fields.  Junk$ is the programmer's note in the
+'   file line for that entry.  Mds$, MdsLoc% and MdsLen% are items in the file
+'   for the use of INTRFACE when generating the interface record for transfer
+'   to MDS.
+
+	FOR x% = 1 TO Value%
+		INPUT #ScnPth%, Vline%(x%), Vcol%(x%), Vlen%(x%)
+		INPUT #ScnPth%, Fwd%(x%), Bwd%(x%), Help$(x%)
+		INPUT #ScnPth%, RecPos%(x%), Rinit%(x%), NonSpc%(x%)
+		INPUT #ScnPth%, Default$(x%), Align$(x%), Junk$
+		INPUT #ScnPth%, Mds$, MdsLoc%, MdsLen%
+	
+'   Force align$ to upper case
+
+		Align$(x%) = UCASE$(Align$(x%))
+
+'   Set error flags and strings to zero/null.
+	   
+		Value$(x%) = SPACE$(Vlen%(x%))
+	   
+		Eflag%(x%) = 0
+		Estring$(x%) = ""
+	NEXT
+
+'   Series full load as found and date field pointers and time stamp flag.
+
+	INPUT #ScnPth%, Sfl%, DateLoc%, TimeStamp%
+  
+'   Area codes for division check
+
+	INPUT #ScnPth%, Area1%, Area2%
+
+	CLOSE #ScnPth%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Doesn't do any processing, just clears the screen and prints the data
+'   entry/edit screen as defined by the various arrays in residence.
+'============================================================================
+SUB PrintScreen
+'----------------------------------------------------------------------------
+
+'   Borrow just about everything from the main module
+
+	SHARED Cfg%(), Pcol%(), Pline%(), Prompt$(), Prompt%, Title$
+	SHARED Value$(), Value%, Vline%(), Vcol%()
+
+'   Clear the screen, center and print the title
+
+	COLOR 11, 0
+	CLS
+	Cputs Title$, 1
+
+'   Set screen color for prompts, print prompts
+
+	COLOR 11, 0
+	PutXY 24, 1, SPACE$(79)
+  
+	FOR x% = 1 TO Prompt%
+		PutXY Pline%(x%), Pcol%(x%), Prompt$(x%)
+	NEXT
+
+'   Set screen color for data items, print data items
+
+	COLOR 15, 4
+	FOR x% = 1 TO Value%
+		PutXY Vline%(x%), Vcol%(x%), Value$(x%)
+	NEXT
+	COLOR 7, 0
+'****************************************************************************
+END SUB
+

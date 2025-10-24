@@ -1,0 +1,508 @@
+'   $TITLE: 'VTMENU - Voltage Transformer Menu'
+'   Version 9.00
+'============================================================================
+'   Transformer Record Data Entry System
+'   K. W. Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Added code to properly handle all AEP Region Codes
+'============================================================================
+'   Define record types for data access
+'----------------------------------------------------------------------------
+	TYPE InfoRecord
+		Number AS INTEGER
+	END TYPE
+
+	TYPE DataRecord
+		Buffer AS STRING * 1000
+	END TYPE
+'============================================================================
+'   Declare functions and subprograms
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DayOfWeek$ (Today$)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, LengTh%)
+DECLARE SUB EditIniFile (FileName$, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%)
+DECLARE SUB GenerateRecords (FileName$, Location%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION Heading% ()
+DECLARE SUB Parse (Buffer$)
+DECLARE FUNCTION PrintLine% (LineCount%, Ptr%, Value$())
+DECLARE FUNCTION PrintMenu$ ()
+DECLARE SUB PrtScrn (Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), Count%, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, Number%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadIniFile (FileName$, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%)
+'============================================================================
+'   $INCLUDE: 'VTDIMCOM.INC'
+'============================================================================
+	DIM SHARED Version$
+	DIM SHARED Info AS InfoRecord, DataRec AS DataRecord
+'============================================================================
+'   Version check
+	Version$ = "Version 9.00"
+	Programmer$ = "K.W.Kroninger"
+	IF COMMAND$ <> "" AND LEFT$(UCASE$(LTRIM$(COMMAND$)), 1) = "V" THEN
+		PRINT "Voltage Transformer Menu - "; Version$
+		END
+	END IF
+'============================================================================
+'   Read the ini file
+'----------------------------------------------------------------------------
+	ReadIniFile "Vt.ini", Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%
+'============================================================================
+
+'   Check out the drive and file
+
+	ON ERROR GOTO BadDrive
+
+OpenIt:
+	DataFile% = FREEFILE
+	OPEN FileName$ FOR RANDOM AS #DataFile% LEN = 1000
+	GET #DataFile%, 1, Info
+	CLOSE
+	ON ERROR GOTO 0
+
+'   Read the screen prompt variables
+
+	CLS
+	FOR x% = 1 TO 29
+		READ Prompt$(x%)
+	NEXT
+
+'   Now read location and length variables
+
+	FOR x% = 1 TO 60
+		READ Prow%(x%), Pcol%(x%), Arow%(x%), Acol%(x%), Alen%(x%)
+		READ Fwd%(x%), Bwd%(x%)
+	NEXT
+
+'   Prompt string data
+
+	DATA "CODE:","ACTIVITY CODE:","S/N:","MFG:","TYPE:"
+	DATA "VOLTS:","DATE REC'D:","P/O#:"
+	DATA "DIELECTRIC:","REGION:","TESTER:","RETIRED:"
+	DATA "REM:","    ","RATIO:","MAX BURDEN:"
+
+'   Some misc screen ID strings
+
+	DATA "VOLTAGE TRANSFORMER"
+	DATA "SECONDARY BURDEN  PERCENT PHASE  ACCURACY"
+	DATA "VOLTS             RATIO  ERROR   CLASS"
+	DATA "DATE:"
+	DATA "1","2","3","4","5","6"
+	DATA "PRICE:","DAMAGE CODES","DEFECT CODES"
+
+'   Location and length data
+
+'        Prow  Pcol  Arow  Acol  Alen  Fwd  Bwd
+	DATA   3,    6,    3,   11,    5,    3,  60  : '  1 Code
+	DATA   3,   54,    3,   70,    2,    4,   3  : '  2 Activity Code
+	DATA   3,   23,    3,   27,   26,    2,   1  : '  3 Serial Number
+	DATA   5,    7,    5,   11,    2,    5,   2  : '  4 Mfr
+	DATA   5,   27,    5,   32,    8,    6,   4  : '  5 Type
+	DATA   5,   51,    5,   57,    6,   15,   5  : '  6 Volts
+	DATA   0,    0,    0,    0,    8,    0,   0  : '  7
+	DATA   0,    0,    0,    0,   12,    0,   0  : '  8
+	DATA   7,   54,    7,   65,    1,   10,  53  : '  9 Dielectric
+	DATA   9,    5,    9,   12,   12,   16,   9  : ' 10 Region
+	DATA   9,   49,    9,   56,    3,   12,  16  : ' 11 Tester
+	DATA   9,   63,    9,   71,    2,   17,  11  : ' 12 Scrap
+	DATA  22,    3,   22,    7,   50,   54,  52  : ' 13 REM
+	DATA   0,    0,    0,    0,    0,    0,   0  : ' 14 Spare!
+	DATA   7,    8,    7,   14,    9,   53,   6  : ' 15 Ratio
+	DATA   9,   30,    9,   41,    3,   11,  10  : ' 16 Max Burden
+	DATA   1,   28,   13,   16,    5,   23,  12  : ' 17 Volts Low Burden
+	DATA  11,   15,   14,   16,    5,   24,  32  : ' 18
+	DATA  12,   16,   15,   16,    5,   25,  36  : ' 19
+	DATA   7,   33,   17,   16,    5,   26,  40  : ' 20 Volts Max Burden
+	DATA  13,   14,   18,   16,    5,   27,  44  : ' 21
+	DATA  14,   14,   19,   16,    5,   28,  48  : ' 22
+	DATA  15,   14,   13,   27,    3,   30,  17  : ' 23 Low Burden
+	DATA  17,   14,   14,   27,    3,   34,  18  : ' 24
+	DATA  18,   14,   15,   27,    3,   38,  19  : ' 25
+	DATA  19,   14,   17,   27,    3,   42,  20  : ' 26 Max Burden
+	DATA  22,   61,   18,   27,    3,   46,  21  : ' 27
+	DATA  14,   61,   19,   27,    3,   50,  22  : ' 28
+	DATA  17,   61,    0,    0,    6,    0,   0  : ' 29 Low B  Ratio Error
+	DATA   0,    0,   13,   34,    6,   31,  23  : ' 30        Ratio
+	DATA   0,    0,   13,   41,    6,   32,  30  : ' 31        Phase Error
+	DATA   0,    0,   13,   48,    6,   18,  31  : ' 32        Acc Class
+	DATA   0,    0,    0,    0,    6,    0,   0  : ' 33 Low B  Ratio Error
+	DATA   0,    0,   14,   34,    6,   35,  24  : ' 34        Ratio
+	DATA   0,    0,   14,   41,    6,   36,  34  : ' 35        Phase Error
+	DATA   0,    0,   14,   48,    6,   19,  35  : ' 36        Acc Class
+	DATA   0,    0,    0,    0,    6,    0,   0  : ' 37 Low B  Ratio Error
+	DATA   0,    0,   15,   34,    6,   39,  25  : ' 38        Ratio
+	DATA   0,    0,   15,   41,    6,   40,  38  : ' 39        Phase Error
+	DATA   0,    0,   15,   48,    6,   20,  39  : ' 40        Acc Class
+	DATA   0,    0,    0,    0,    6,    0,   0  : ' 41 Max B  Ratio Error
+	DATA   0,    0,   17,   34,    6,   43,  26  : ' 42        Ratio
+	DATA   0,    0,   17,   41,    6,   44,  42  : ' 43        Phase Error
+	DATA   0,    0,   17,   48,    6,   21,  43  : ' 44        Acc Class
+	DATA   0,    0,    0,    0,    6,    0,   0  : ' 45 Max    Ratio Error
+	DATA   0,    0,   18,   34,    6,   47,  27  : ' 46        Ratio
+	DATA   0,    0,   18,   41,    6,   48,  46  : ' 47        Phase Error
+	DATA   0,    0,   18,   48,    6,   22,  47  : ' 48        Acc Class
+	DATA   0,    0,    0,    0,    6,    0,   0  : ' 49 Max B  Ratio Error
+	DATA   0,    0,   19,   34,    6,   51,  28  : ' 50        Ratio
+	DATA   0,    0,   19,   41,    6,   52,  50  : ' 51        Phase Error
+	DATA   0,    0,   19,   48,    6,   13,  51  : ' 52        Acc Class
+	DATA   0,    0,    7,   38,    8,    9,  15  : ' 53 Test Date
+	DATA   0,    0,   22,   67,   10,   55,  13  : ' 54 Price
+	DATA   0,    0,   15,   63,    2,   56,  54  : ' 55 Damage 1
+	DATA   0,    0,   15,   66,    2,   57,  55  : ' 56 Damage 2
+	DATA   0,    0,   15,   69,    2,   58,  56  : ' 57 Damage 3
+	DATA   0,    0,   18,   63,    2,   59,  57  : ' 58 Defect 1
+	DATA   0,    0,   18,   66,    2,   60,  58  : ' 59 Defect 2
+	DATA   0,    0,   18,   69,    2,    1,  59  : ' 60 Defect 3
+
+'   End of data
+'============================================================================
+'   Turn on error handler
+'----------------------------------------------------------------------------
+	ON ERROR GOTO NetProblem
+'============================================================================
+'   Init value variables
+
+	Ptr% = 1
+	EdRec% = 0
+	FOR x% = 1 TO 60
+		IF Arow%(x%) > 0 THEN
+			Value$(x%) = SPACE$(Alen%(x%))
+		END IF
+	NEXT
+'============================================================================
+Menu:
+   
+	DO
+		CLOSE
+		x$ = PrintMenu$
+
+		CallPrg% = 1
+		SELECT CASE (x$)
+			CASE "1"
+				GOTO ListRecs
+			CASE "2"
+				GOTO RecsOnFile
+			CASE "3"
+				Flag% = VAL(x$)
+				CHAIN "VTDATA"
+			CASE "4"
+				GOTO EditRecord
+			CASE "5"
+				GenerateRecords FileName$, 453
+				GOTO Menu
+			CASE "C"
+				EditIniFile "Vt.ini", Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, CkFlag%
+		END SELECT
+	LOOP UNTIL x$ = "6"
+   
+	RUN "menu"
+'============================================================================
+'   List Voltage Transformer Test Records
+'----------------------------------------------------------------------------
+ListRecs:
+	CLS
+
+'   Get the file
+
+	GOSUB OpnFile
+	IF RecNum% = 0 THEN
+		GOTO Menu
+	END IF
+   
+'   Clear exit flag variable
+
+	x$ = " "
+	FOR Ptr% = 1 TO RecNum%
+
+'   If user selects to escape from the routine, keep the stack clean
+
+		IF x$ <> CHR$(27) THEN
+			GET #1, Ptr% + 1, DataRec
+			Buff$ = DataRec.Buffer
+			Typ$ = LEFT$(Buff$, 1)
+			IF Typ$ = "3" THEN
+				Parse Buff$
+				PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 60, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 60
+				COLOR Mfg%, Mbg%
+				Msg$ = "(Record" + STR$(Ptr%) + " of" + STR$(RecNum%) + ") ENTER to continue, ESC to return to menu."
+				x$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), Msg$)
+			END IF
+		END IF
+	NEXT
+
+'   Done with printing records. Prompt for return to menu.
+
+	CLOSE #1
+	PutXY 25, 1, SPACE$(79)
+	GOTO Menu
+'============================================================================
+'   List records on file
+'----------------------------------------------------------------------------
+RecsOnFile:
+	CLS
+	COLOR Mfg%, Mbg%
+	PutXY 25, 1, SPACE$(79)
+	GOSUB OpnFile
+	IF RecNum% = 0 THEN
+		GOTO Menu
+	END IF
+	LineCount% = Heading%
+   
+'   Clear the escape flag
+
+	x$ = " "
+	FOR Ptr% = 1 TO RecNum%
+		IF x$ <> CHR$(27) THEN
+			GET #1, Ptr% + 1, DataRec
+			Buff$ = DataRec.Buffer
+			x$ = LEFT$(Buff$, 1)
+			IF x$ = "3" THEN
+				Parse Buff$
+				LineCount% = PrintLine%(LineCount%, Ptr%, Value$())
+			END IF
+			IF LineCount% = 20 THEN
+				x$ = Get1Key$(CHR$(13) + CHR$(27), "ENTER to continue, ESC to return to menu")
+				LineCount% = 0
+				IF x$ = CHR$(13) THEN
+					LineCount% = PrintHeading%
+				END IF
+			END IF
+		END IF
+	NEXT
+	CLOSE
+	IF LineCount% > 0 THEN
+		x$ = Get1Key$(CHR$(13), "Press ENTER to return to the menu")
+	END IF
+	GOTO Menu
+'============================================================================
+'   Open file subroutine
+'----------------------------------------------------------------------------
+OpnFile:
+	CLS
+	COLOR Mfg%, Mbg%
+	PutXY 25, 1, SPACE$(79)
+	OPEN FileName$ FOR RANDOM AS #1 LEN = LEN(DataRec)
+	GET #1, 1, Info
+	RecNum% = Info.Number
+	IF RecNum% = 0 THEN
+		CLOSE
+		KILL FileName$
+		CLS
+		PutXY 10, 20, "No file found on this disk."
+		PutXY 15, 20, "Try again? (Y/N)"
+		x$ = Get1Key$("YN", "")
+		IF x$ = "N" THEN
+			RETURN
+		END IF
+		CLS
+		PutXY 25, 23, "Insert new disk, then press ENTER"
+		x$ = Get1Key$(CHR$(13), "")
+
+		GOTO OpnFile
+	END IF
+   
+	RETURN
+'============================================================================
+'   Subroutine to edit record
+'----------------------------------------------------------------------------
+EditRecord:
+	CLS
+	GOSUB OpnFile
+	CLS
+	IF RecNum% = 0 THEN
+		GOTO Menu
+	END IF
+	LOCATE
+	PRINT USING "Record number to edit (1-####)"; RecNum%
+	INPUT EdRec%
+
+'   If the user wishes to back out, an entry of zero or
+'   more records than there are in the file will do so.
+
+	IF EdRec% < 1 OR EdRec% > RecNum% THEN
+		CLOSE
+		GOTO Menu
+	END IF
+	GET #1, EdRec% + 1, DataRec
+	Buff$ = DataRec.Buffer
+	Parse Buff$
+	x$ = LEFT$(Buff$, 1)
+	IF x$ <> "3" THEN
+		CLOSE
+		GOTO Menu
+	END IF
+	CallPrg% = 0
+	Flag% = 4
+	CLOSE
+	CHAIN "VTDATA"
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+BadDrive:
+	PutXY 10, 18, "There seems to be a problem with the drive."
+	PutXY 15, 24, "Please correct it and press ENTER"
+	x$ = Get1Key$(CHR$(13), "")
+	RESUME OpenIt
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+   
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+   
+	ELSE
+	  
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+
+	END IF
+   
+	IF Junk$ = CHR$(27) THEN
+		RESUME Menu
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of VTMenu main module
+'****************************************************************************
+
+'****************************************************************************
+'   Data parse routine
+'============================================================================
+SUB Parse (Buffer$)
+'----------------------------------------------------------------------------
+	SHARED Value$(), Alen%()
+
+	Value$(1) = MID$(Buffer$, 2, Alen%(1))      '   Device Code
+	Value$(2) = MID$(Buffer$, 991, Alen%(2))    '   Activity Code
+	Value$(3) = MID$(Buffer$, 453, Alen%(3))    '   MFG Serial Number
+	Value$(4) = MID$(Buffer$, 28, Alen%(4))     '   Mfg
+	Value$(5) = MID$(Buffer$, 33, Alen%(5))     '   Type
+	Value$(6) = MID$(Buffer$, 481, Alen%(6))    '   Volts
+	Value$(9) = MID$(Buffer$, 66, Alen%(9))     '   Dielectric Check
+	Value$(10) = MID$(Buffer$, 901, Alen%(10))  '   Division
+	Value$(11) = MID$(Buffer$, 71, Alen%(11))   '   Tester
+	Value$(12) = MID$(Buffer$, 479, Alen%(12))  '   Retirement Code
+	Value$(13) = MID$(Buffer$, 75, Alen%(13))   '   Remarks
+	Value$(15) = MID$(Buffer$, 153, Alen%(15))  '   Serial number
+	Value$(16) = MID$(Buffer$, 162, Alen%(16))  '   Maximum Burden
+	Value$(17) = MID$(Buffer$, 165, Alen%(17))  '   Volts line 1
+	Value$(18) = MID$(Buffer$, 170, Alen%(18))  '   Volts line 2
+	Value$(19) = MID$(Buffer$, 175, Alen%(19))  '   Volts line 3
+	Value$(20) = MID$(Buffer$, 195, Alen%(20))  '   Volts line 4
+	Value$(21) = MID$(Buffer$, 200, Alen%(21))  '   Volts line 5
+	Value$(22) = MID$(Buffer$, 205, Alen%(22))  '   Volts line 6
+	Value$(23) = MID$(Buffer$, 210, Alen%(23))  '   Burden line 1
+	Value$(24) = MID$(Buffer$, 213, Alen%(24))  '   Burden line 2
+	Value$(25) = MID$(Buffer$, 216, Alen%(25))  '   Burden line 3
+	Value$(26) = MID$(Buffer$, 228, Alen%(26))  '   Burden line 4
+	Value$(27) = MID$(Buffer$, 231, Alen%(27))  '   Burden line 5
+	Value$(28) = MID$(Buffer$, 234, Alen%(28))  '   Burden line 6
+	Value$(30) = MID$(Buffer$, 243, Alen%(30))  '   Ratio line 1
+	Value$(31) = MID$(Buffer$, 249, Alen%(31))  '   Phase Error line 1
+	Value$(32) = MID$(Buffer$, 255, Alen%(32))  '   Accuracy Class line 1
+	Value$(34) = MID$(Buffer$, 267, Alen%(34))  '   Ratio line 2
+	Value$(35) = MID$(Buffer$, 273, Alen%(35))  '   Phase Error line 2
+	Value$(36) = MID$(Buffer$, 279, Alen%(36))  '   Accuracy Class line 2
+	Value$(38) = MID$(Buffer$, 291, Alen%(38))  '   Ratio line 3
+	Value$(39) = MID$(Buffer$, 297, Alen%(39))  '   Phase Error line 3
+	Value$(40) = MID$(Buffer$, 303, Alen%(40))  '   Accuracy Class line 3
+	Value$(42) = MID$(Buffer$, 387, Alen%(42))  '   Ratio line 4
+	Value$(43) = MID$(Buffer$, 393, Alen%(43))  '   Phase Error line 4
+	Value$(44) = MID$(Buffer$, 399, Alen%(44))  '   Accuracy Class line 4
+	Value$(46) = MID$(Buffer$, 411, Alen%(46))  '   Ratio line 5
+	Value$(47) = MID$(Buffer$, 417, Alen%(47))  '   Phase Error line 5
+	Value$(48) = MID$(Buffer$, 423, Alen%(48))  '   Accuracy Class line 5
+	Value$(50) = MID$(Buffer$, 435, Alen%(50))  '   Ratio line 6
+	Value$(51) = MID$(Buffer$, 441, Alen%(51))  '   Phase Error line 6
+	Value$(52) = MID$(Buffer$, 447, Alen%(52))  '   Accuracy Class line 6
+	Value$(53) = MID$(Buffer$, 125, Alen%(53))  '   Test Date
+	Value$(54) = MID$(Buffer$, 133, Alen%(54))  '   Price
+	Value$(55) = MID$(Buffer$, 601, Alen%(55))  '   Damage code 1
+	Value$(56) = MID$(Buffer$, 603, Alen%(56))  '   Damage code 2
+	Value$(57) = MID$(Buffer$, 605, Alen%(57))  '   Damage code 3
+	Value$(58) = MID$(Buffer$, 607, Alen%(57))  '   Defect code 1
+	Value$(59) = MID$(Buffer$, 609, Alen%(59))  '   Defect code 2
+	Value$(60) = MID$(Buffer$, 611, Alen%(60))  '   Defect code 3
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Clears screen, prints menu.  Returns menu choice.
+'============================================================================
+FUNCTION PrintMenu$
+'----------------------------------------------------------------------------
+
+	SHARED FileName$
+
+	CLS
+ 
+	COLOR Mfg%, Mbg%
+
+	InFile% = FREEFILE
+	OPEN FileName$ FOR RANDOM AS #InFile% LEN = LEN(Buffer)
+	GET #InFile%, 1, Info
+	CLOSE #InFile%
+
+'   Clear Status Line
+
+	LOCATE 25, 1, 0
+	PRINT SPACE$(79);
+
+'   Locate and draw a box to define menu
+	 
+	DrawMenuBox 1, 24, 6, 20, 78
+
+'   Print Menu Text
+
+	Cputs Company$, 2
+	Cputs Facility$, 3
+	Cputs "Transformer Record Data Entry System", 4
+	Cputs "Voltage Transformer Menu", 5
+
+'   Menu choice text
+
+	PutXY 8, 24, "1. List Transformer Test Records"
+	PutXY 9, 24, "2. List of Transformers in File"
+	PutXY 10, 24, "3. Enter Voltage Transformer data"
+	PutXY 11, 24, "4. Edit Voltage Transformer Data"
+	PutXY 12, 24, "5. Generate VT Records"
+	PutXY 14, 24, "6. Exit"
+
+	PutXY 16, 24, "C - Edit colors"
+
+	Cputs STR$(Info.Number) + " records in file.", 18
+   
+	PutXY 22, 32, "Option number? "
+
+'   Get input
+ 
+	PutXY 2, 77 - LEN(Version$), Version$
+ 
+	COLOR Mfg%, Mbg%
+	DO
+		DO
+			PutXY 5, 3, DATE$
+			PutXY 5, 69, TIME$
+			PutXY 2, 3, DayOfWeek$(DATE$)
+			LOCATE , , 0
+			x$ = UCASE$(INKEY$)
+		LOOP WHILE x$ = ""
+		IF x$ = CHR$(27) THEN
+			x$ = "6"
+		END IF
+	LOOP WHILE INSTR("123456C", x$) = 0
+
+	PrintMenu$ = x$
+'****************************************************************************
+END FUNCTION
+

@@ -1,0 +1,157 @@
+DECLARE SUB BadInput ()
+'   $title:'Division .HHF File Backup Management Utility'
+'   R.W.OEHLER
+'   Ohio Power Company
+'   General Service Lab
+'   sept, 1992
+'============================================================================
+'   Copys division .HHF file specified on command line to a file in the
+'   backup directory with the current date as a filename and the extension
+'   .HHF.  Deletes all backup files over 30 days old.  Does not delete
+'   current working .HHF file.
+'============================================================================
+'   No file specified.  Tell 'em how to use the program
+'----------------------------------------------------------------------------
+CLS
+    IF LTRIM$(RTRIM$(COMMAND$)) = "" THEN
+        COLOR 7, 1
+        PRINT " HHFSAVE version 1.1.KY  Written by R W Oehler 9/03/1992 "
+        PRINT " Useage:  HHFSAVE <filename>                             "
+        PRINT " <filename> is the .HHF file's root filename             "
+        PRINT " Example: HHFSAVE ASHLAND                                "
+        PRINT
+        COLOR 6, 3
+        PRINT "This program explicitly looks for data on drive g:\mv90\reader "
+        PRINT " and backs up to drive C:\BACKUP                               "
+        PRINT
+        COLOR 1, 7
+        CALL BadInput
+        END
+    END IF
+'============================================================================
+'   Generate needed strings.
+'----------------------------------------------------------------------------
+    Root$ = LTRIM$(RTRIM$(COMMAND$))
+    backup$ = RIGHT$(DATE$, 4) + LEFT$(DATE$, 2) + MID$(DATE$, 4, 2)
+
+Div$ = ""
+
+IF UCASE$(Root$) = "ASHLAND" THEN Div$ = "DV1"
+IF UCASE$(Root$) = "WILLSON" THEN Div$ = "DV2"
+IF UCASE$(Root$) = "HAZARD" THEN Div$ = "DV3"
+IF UCASE$(Root$) = "PIKE" THEN Div$ = "DV4"
+IF UCASE$(Root$) = "GOMD" THEN Div$ = "DV5"
+
+IF Div$ = "" THEN CLS : LOCATE 1, 1: PRINT "I Don't Know That Division!": CALL BadInput: END
+
+'============================================================================
+
+'   Copy the current working .HHF file.
+'----------------------------------------------------------------------------
+SHELL "copy G:\mv90\reader\" + Root$ + ".HHF c:\backup\" + backup$ + "." + Div$
+'============================================================================
+'   Log to the backup directory
+'----------------------------------------------------------------------------
+    CHDIR "c:\backup"
+'============================================================================
+'   Get the date one month ago.
+    Year% = VAL(RIGHT$(DATE$, 4))
+    Month% = VAL(LEFT$(DATE$, 2))
+    Day% = VAL(MID$(DATE$, 4, 2))
+
+'   Decrement the month
+
+    Month% = Month% - 1
+
+'   If it was January, we want December
+
+    IF Month% = 0 THEN
+        Month% = 12
+        Year% = Year% - 1
+    END IF
+
+'   Handle the case of more days in current than previous month and running
+'   this on the last day of the month.
+
+    SELECT CASE Month%
+        CASE 2
+            Leap% = ((Year% MOD 4) = 0)
+            IF Day% > 28 - Leap% THEN
+                Day% = 28 - Leap%
+            END IF
+        CASE 4, 6, 9, 11
+            IF Day% > 30 THEN
+                Day% = 30
+            END IF
+    END SELECT
+    Month$ = LTRIM$(STR$(Month%))
+    IF Month% < 10 THEN
+        Month$ = "0" + Month$
+    END IF
+    Day$ = LTRIM$(STR$(Day%))
+    IF Day% < 10 THEN
+        Day$ = "0" + Day$
+    END IF
+    KillDate$ = LTRIM$(STR$(Year%)) + Month$ + Day$
+'============================================================================
+'   Get the directory information the easy way.
+'----------------------------------------------------------------------------
+    DICK$ = "FILE.LST"
+    SHELL "dir > file.lst"
+    InFile% = FREEFILE
+    OPEN DICK$ FOR INPUT AS #InFile%
+'   This is the loop that does the deed
+
+    DO
+        LINE INPUT #InFile%, Work$
+       
+       IF INSTR(Work$, "DV") > 0 THEN          '  All my backups end in DV?
+             FileYear% = VAL(MID$(Work$, 30, 2))
+               
+                  IF FileYear% > 50 THEN
+                     FileDate$ = "19"
+                  ELSE
+                     FileDate$ = "20"
+                  END IF
+           
+             FileDate$ = FileDate$ + MID$(Work$, 30, 2) + MID$(Work$, 24, 2) + MID$(Work$, 27, 2)
+         
+PRINT "Checking for old files from "; Div$
+         
+          IF RTRIM$(MID$(Work$, 10, 3)) = Div$ THEN
+
+              IF RTRIM$(LEFT$(Work$, 8)) <= KillDate$ THEN
+                   PRINT RTRIM$(LEFT$(Work$, 8)) + "." + Div$; " FOUND ONE!": BEEP
+                   KILL RTRIM$(LEFT$(Work$, 8)) + "." + Div$
+              END IF
+         
+          END IF
+
+      END IF
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+    KILL DICK$
+    CHDIR "C:\"
+END
+
+'   End of HHFSAVE.BAS
+
+SUB BadInput
+LOCATE 9, 1
+BEEP
+COLOR 19, 1
+PRINT "             Acceptable Values for Division HHF's are:                "
+PRINT
+COLOR 7, 0
+PRINT "ASHLAND WHICH IS ASHLANDS   HHF_FILE (BACKUP WILL BE YYYYMMDD.DV1)"
+PRINT "WILLSON WHICH IS WILLIAMSON HHF_FILE (BACKUP WILL BE YYYYMMDD.DV2)"
+PRINT "HAZARD  WHICH IS HAZARD     HHF_FILE (BACKUP WILL BE YYYYMMDD.DV3)"
+PRINT "PIKE    WHICH IS PIKEVILLE  HHF_FILE (BACKUP WILL BE YYYYMMDD.DV4)"
+PRINT "GOMD    WHICH IS GO METER   HHF_FILE (BACKUP WILL BE YYYYMMDD.DV5)"
+PRINT
+COLOR 23, 4
+PRINT " IF A BACKUP IS MORE THAN 30 DAYS OLD, IT WILL BE REMOVED AUTOMATICALLY "
+PRINT
+COLOR 7, 0
+END SUB
+

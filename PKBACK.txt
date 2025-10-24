@@ -1,0 +1,29 @@
+'   $title:'PKBACK - Pkbackup program using PKzip and system date/time'
+'   Ken Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Canton, OH
+'   Version 0.10
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   September, 1998
+'       First release
+'============================================================================
+    c$ = LTRIM$(RTRIM$(COMMAND$))
+    IF c$ = "V" THEN
+        PRINT "Version 0.10"
+        END
+    END IF
+    IF c$ = "" THEN
+        END
+    END IF
+    IF RIGHT$(c$, 1) <> "\" THEN
+        c$ = c$ + "\"
+    END IF
+    Thefile$ = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + LEFT$(TIME$, 2) + MID$(TIME$, 4, 2)
+    SHELL "pkzip " + c$ + Thefile$
+
+
+
+

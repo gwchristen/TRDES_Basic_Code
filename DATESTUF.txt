@@ -1,0 +1,337 @@
+DECLARE FUNCTION CalcPreviousDate$ (Dt$, NumberOfDays%)
+'   $title:'DATESTUF - MRDESII/TRDES Date routines'
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Version 1.00
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   (No changes in past year)
+'============================================================================
+'   Define Record Types
+'----------------------------------------------------------------------------
+   TYPE FileFindBuf                   'DTA Buffer
+      DOS            AS STRING * 19   'first 20 bytes reserved
+      CreateTime     AS STRING * 1    'by DOS
+      Attributes     AS INTEGER       'Attribute of file
+      AccessTime     AS INTEGER       'Last access time of file
+      AccessDate     AS INTEGER       'Last access date of file
+      FileSize       AS LONG          'Size of file in bytes
+      FileName       AS STRING * 13   'File name XXXXXXXX.XXX
+   END TYPE
+'----------------------------------------------------------------------------
+'   Define the type needed for INTERRUPT
+'   This one does not handle the segment registers.
+    TYPE RegType
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+    END TYPE
+'----------------------------------------------------------------------------
+   TYPE Register                      'Type for CALL Interrupt
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+        Ds    AS INTEGER
+        es    AS INTEGER
+   END TYPE
+'----------------------------------------------------------------------------
+    TYPE TheFileName
+        FileName AS STRING * 13
+    END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE FUNCTION DateBack% (OldName$)
+DECLARE FUNCTION DayOfWeek$ (Today$)
+DECLARE FUNCTION DecDate$ (TheDate$, Decrement%)
+DECLARE SUB DoVScreen (First%, Pointer%, Title$, Last%, Row%, Col%, Select$(), Sel%)
+DECLARE FUNCTION DOY2YyMmDd$ (TheDate$)
+DECLARE FUNCTION ErrorMsg$ (ErrorNumber%)
+DECLARE FUNCTION FirstFM% (Path$, FA%)
+DECLARE FUNCTION GetSelection$ (Length%, FileName$, Select$())
+DECLARE FUNCTION GetVSelection$ (Length%, FileName$, Select$())
+DECLARE SUB InitBuf (Buffer AS ANY)
+DECLARE SUB INTERRUPT (intnum AS INTEGER, InReg AS RegType, OutReg AS RegType)
+DECLARE SUB INTERRUPTX (intnum AS INTEGER, InReg AS Register, OutReg AS Register)
+DECLARE FUNCTION Julian& ()
+DECLARE SUB LoadLookupFile (FileName$, Sel%, Select$(), Title$)
+DECLARE FUNCTION Mayan$ ()
+DECLARE FUNCTION MDY2DOY$ (TheDate$)
+DECLARE SUB MoveFieldPointer (Ptr%, Work%(), Vline%())
+DECLARE FUNCTION NetFlag$ (FlagNumber%, Funct%, ReqValue$, NewValue$, Drive$)
+DECLARE FUNCTION ParseCmdLine% (Argv$())
+DECLARE SUB PrintaSel (Row%, Col%, Pointer%, Item$)
+DECLARE FUNCTION WeekDay% (Today$)
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+
+'****************************************************************************
+'   This function calculates a date NumberOFDays% in the past and returns it
+'   as a string.  Date must be in string form in the format YYYY/MM/DD.
+'============================================================================
+FUNCTION CalcPreviousDate$ (Dt$, NumberOfDays%)
+'----------------------------------------------------------------------------
+    Year% = VAL(LEFT$(Dt$, 4))
+    Month% = VAL(MID$(Dt$, 6, 2))
+    Day% = VAL(RIGHT$(Dt$, 2))
+    Day% = Day% - NumberOfDays%
+    IF Day% < 1 THEN
+        SELECT CASE Month%
+            CASE 1, 2, 4, 6, 8, 9, 11
+                Day% = 31 + Day%
+            CASE 5, 7, 10, 12
+                Day% = 30 + Day%
+            CASE 3
+                IF (Year% MOD 4) = 0 THEN
+                    Day% = 29 - Day%
+                ELSE
+                    Day% = 28 - Day%
+                END IF
+        END SELECT
+        Month% = Month% - 1
+        IF Month% < 1 THEN
+            Month% = 12
+            Year% = Year% - 1
+        END IF
+    END IF
+    Year$ = LTRIM$(RTRIM$(STR$(Year%)))
+    Month$ = RIGHT$("00" + LTRIM$(RTRIM$(STR$(Month%))), 2)
+    Day$ = RIGHT$("00" + LTRIM$(RTRIM$(STR$(Day%))), 2)
+    CalcPreviousDate$ = Year$ + "/" + Month$ + "/" + Day$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Returns day of week (text).
+'   Today$ is in Basic DATE$ format (MM-DD-YYYY).
+'============================================================================
+FUNCTION DayOfWeek$ (Today$)
+'----------------------------------------------------------------------------
+    SELECT CASE WeekDay%(Today$)
+        CASE 0
+            DayOfWeek$ = "Sunday"
+        CASE 1
+            DayOfWeek$ = "Monday"
+        CASE 2
+            DayOfWeek$ = "Tuesday"
+        CASE 3
+            DayOfWeek$ = "Wednesday"
+        CASE 4
+            DayOfWeek$ = "Thursday"
+        CASE 5
+            DayOfWeek$ = "Friday"
+        CASE 6
+            DayOfWeek$ = "Saturday"
+    END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Decrements the date passed in TheDate$ in the form YYYYNNN by the number
+'   of days passed in Decrement%, returns date in the form YYYYNNN.
+'============================================================================
+FUNCTION DecDate$ (TheDate$, Decrement%)
+'----------------------------------------------------------------------------
+    Year% = VAL(LEFT$(TheDate$, 4))
+    Day% = VAL(MID$(TheDate$, 5, 3)) - Decrement%
+    IF Day% < 1 THEN
+        Year% = Year% - 1
+        Day% = Day% + Leap% + 365
+    END IF
+    Leap% = ABS((Year% MOD 4) = 0)
+    Year$ = RIGHT$("0000" + LTRIM$(RTRIM$(STR$(Year%))), 4)
+    Day$ = RIGHT$("000" + LTRIM$(RTRIM$(STR$(Day%))), 3)
+    DecDate$ = Year$ + Day$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Accepts a date in the string TheDate$ in the form YYYYNNN and converts to
+'   DateBack output string in the form YYMMDD.  Note 2 digit year.
+'============================================================================
+FUNCTION DOY2YyMmDd$ (TheDate$)
+'----------------------------------------------------------------------------
+    Day% = VAL(MID$(TheDate$, 5, 3))
+    Year% = VAL(LEFT$(TheDate$, 4))
+    Leap% = ABS((Year% MOD 4) = 0)
+
+    SELECT CASE Day%
+        CASE 1 TO 31                    ' January
+            Month$ = "01"
+        CASE 32 TO Leap% + 59           ' February
+            Month$ = "02"
+            Day% = Day% - 31
+        CASE Leap% + 60 TO Leap% + 90   ' March
+            Month$ = "03"
+            Day% = Day% - (Leap% + 59)
+        CASE Leap% + 91 TO Leap% + 120  ' April
+            Month$ = "04"
+            Day% = Day% - (Leap% + 90)
+        CASE Leap% + 121 TO Leap% + 151 ' May
+            Month$ = "05"
+            Day% = Day% - (Leap% + 120)
+        CASE Leap% + 152 TO Leap% + 181 ' June
+            Month$ = "06"
+            Day% = Day% - (Leap% + 151)
+        CASE Leap% + 182 TO Leap% + 212 ' July
+            Month$ = "07"
+            Day% = Day% - (Leap% + 181)
+        CASE Leap% + 213 TO Leap% + 243 ' August
+            Month$ = "08"
+            Day% = Day% - (Leap% + 212)
+        CASE Leap% + 244 TO Leap% + 273 ' September
+            Month$ = "09"
+            Day% = Day% - (Leap% + 243)
+        CASE Leap% + 274 TO Leap% + 304 ' October
+            Month$ = "10"
+            Day% = Day% - (Leap% + 273)
+        CASE Leap% + 305 TO Leap% + 334 ' November
+            Month$ = "11"
+            Day% = Day% - (Leap% + 304)
+        CASE Leap% + 335 TO Leap% + 365 ' December
+            Month$ = "12"
+            Day% = Day% - (Leap% + 334)
+    END SELECT
+
+    Day$ = RIGHT$("00" + LTRIM$(RTRIM$(STR$(Day%))), 2)
+    DOY2YyMmDd$ = MID$(TheDate$, 3, 2) + Month$ + Day$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Calculates Julian day number from computer calendar.
+'============================================================================
+FUNCTION Julian&
+'----------------------------------------------------------------------------
+    Year = VAL(RIGHT$(DATE$, 4))
+    Month = VAL(LEFT$(DATE$, 2))
+    Day = VAL(MID$(DATE$, 4, 2))
+    IF Month < 3 THEN
+        Month = Month + 13
+        Year = Year - 1
+    ELSE
+        Month = Month + 1
+    END IF
+    Julian& = INT(365.25 * Year) + INT(30.6001 * Month) + Day + 1720981
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Returns print string for Mayan Date (long count)
+'   Uses Julian&
+'============================================================================
+FUNCTION Mayan$
+'----------------------------------------------------------------------------
+    Work& = Julian& - 584284
+    b$ = LTRIM$(RTRIM$(STR$(Work& \ 144000))) + " Baktun "
+    Work& = Work& MOD 144000
+    K$ = LTRIM$(RTRIM$(STR$(Work& \ 7200))) + " Katun "
+    Work& = Work& MOD 7200
+    T$ = LTRIM$(RTRIM$(STR$(Work& \ 360))) + " Tun "
+    Work& = Work& MOD 360
+    U$ = LTRIM$(RTRIM$(STR$(Work& \ 20))) + " Uinal "
+    Kin$ = LTRIM$(RTRIM$(STR$(Work& MOD 20))) + " Kin"
+    Mayan$ = "Mayan date: " + b$ + K$ + T$ + U$ + Kin$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Returns string representation of date in TheDate$ in the form YYYYNNN.
+'   TheDate$ should be passed as MM-DD-YYYY.  This is the format of QB's
+'   Date$ function.  If the date passed in TheDate$ is not valid, returns
+'   bad date message.
+'============================================================================
+FUNCTION MDY2DOY$ (TheDate$)
+'----------------------------------------------------------------------------
+
+'   Parse incoming string into integers for calculation.
+
+    Year% = VAL(MID$(TheDate$, 7, 4))
+    Month% = VAL(LEFT$(TheDate$, 2))
+    Day% = VAL(MID$(TheDate$, 4, 2))
+
+'   Now check for bad data.  Exit with bad date message if data invalid.
+
+    Leap% = (ABS((Year% MOD 4) = 0) AND ABS((Year% MOD 100) > 0)) OR ABS((Year% MOD 400) = 0)
+
+    SELECT CASE Month%
+        CASE 1, 3, 5, 7, 8, 10, 12
+            Days% = 31
+        CASE 4, 6, 9, 11
+            Days% = 30
+        CASE 2
+            Days% = Leap% + 28
+    END SELECT
+
+    IF Year% = 0 OR Month% = 0 OR Month% > 12 OR Day% = 0 OR Day% > Days% THEN
+        MDY2DOY$ = "Bad Date"
+        EXIT FUNCTION
+    END IF
+
+'   Date must be valid.  Process.
+
+    Work$ = MID$(TheDate$, 7, 4)
+
+    SELECT CASE Month%
+        CASE 1                  ' January
+            AddDays% = 0
+        CASE 2                  ' February
+            AddDays% = 31
+        CASE 3                  ' March
+            AddDays% = Leap% + 59
+        CASE 4                  ' April
+            AddDays% = Leap% + 90
+        CASE 5                  ' May
+            AddDays% = Leap% + 120
+        CASE 6                  ' June
+            AddDays% = Leap% + 151
+        CASE 7                  ' July
+            AddDays% = Leap% + 181
+        CASE 8                  ' August
+            AddDays% = Leap% + 212
+        CASE 9                  ' September
+            AddDays% = Leap% + 243
+        CASE 10                 ' October
+            AddDays% = Leap% + 273
+        CASE 11                 ' November
+            AddDays% = Leap% + 304
+        CASE 12                 ' December
+            AddDays% = Leap% + 334
+    END SELECT
+
+    Days$ = RIGHT$("000" + LTRIM$(RTRIM$(STR$(Day% + AddDays%))), 3)
+
+    MDY2DOY$ = Work$ + Days$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Gets day of week from DOS.
+'   Returns 0 to 6 for Sunday through Saturday.
+'============================================================================
+FUNCTION WeekDay% (Today$)
+'----------------------------------------------------------------------------
+    DIM Regs AS RegType
+ 
+    Regs.Ax = &H2A00
+    INTERRUPT &H21, Regs, Regs
+    WeekDay% = Regs.Ax AND 7
+'****************************************************************************
+END FUNCTION
+

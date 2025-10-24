@@ -1,0 +1,82 @@
+    CLS
+    COLOR 15, 0
+    LOCATE 7, 13
+    PRINT "  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15"
+    FOR x% = 0 TO 7
+        COLOR 15, 0
+        PRINT TAB(10); x%; " ";
+        FOR y% = 0 TO 15
+            COLOR y%, x%
+            PRINT " 0 ";
+        NEXT
+        PRINT
+    NEXT
+    COLOR 14, 0
+    LOCATE 18, 10
+    PRINT "Use cursor keys to move cursor selector."
+    PRINT TAB(10); "Up/Down arrows change background color."
+    PRINT TAB(10); "Left/Right arrows change foreground color."
+    PRINT TAB(10); "Sample appears in upper right."
+    PRINT TAB(10); "Color statement appears in upper left."
+    PRINT TAB(10); "Press Enter or Esc to exit."
+    x% = 0
+    y% = 0
+    COLOR 15, 0
+    LOCATE 4, 10
+    PRINT "Sample will appear here-->"
+    DO
+        COLOR 15, 0
+        LOCATE 6, 15
+        PRINT SPACE$(50)
+        LOCATE 6, y% * 3 + 15
+        PRINT "v"
+        LOCATE 7, 1
+        FOR xx% = 0 TO 8
+            PRINT SPACE$(10)
+        NEXT
+        LOCATE 8 + x%, 9
+        PRINT ">";
+        COLOR 15, 0
+        LOCATE 2, 20
+        PRINT "Color"; STR$(y%); ","; LTRIM$(STR$(x%)); "  "
+        COLOR y%, x%
+        LOCATE 2, 37
+        PRINT "ษออออออออออออป"
+        LOCATE 3, 37
+        PRINT "บ            บ"
+        LOCATE 4, 37
+        PRINT "บ            บ"
+        LOCATE 5, 37
+        PRINT "ศออออออออออออผ"
+        LOCATE 3, 38
+        PRINT "SampleSample"
+        LOCATE 4, 38
+        PRINT "SampleSample"
+        DO
+            x$ = INKEY$
+        LOOP WHILE x$ = ""
+        IF LEN(x$) = 2 THEN
+            SELECT CASE ASC(RIGHT$(x$, 1))
+                CASE 72         ' Up arrow
+                    IF x% > 0 THEN
+                        x% = x% - 1
+                    END IF
+                CASE 77         ' Right arrow
+                    IF y% < 15 THEN
+                        y% = y% + 1
+                    END IF
+                CASE 80         ' Down arrow
+                    IF x% < 7 THEN
+                        x% = x% + 1
+                    END IF
+                CASE 75         ' Left arrow
+                    IF y% > 0 THEN
+                        y% = y% - 1
+                    END IF
+            END SELECT
+        END IF
+    LOOP UNTIL x$ = CHR$(13) OR x$ = CHR$(27)
+    COLOR 7, 0
+    CLS
+    PRINT TAB(5); "Color statement: COLOR "; LTRIM$(STR$(y%)); ","; LTRIM$(STR$(x%))
+

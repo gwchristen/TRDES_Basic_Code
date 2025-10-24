@@ -1,0 +1,38 @@
+'   $title:'RTRIM - Remove trailing spaces from lines'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   Canton, OH
+'   August, 1993
+'   version the only
+'============================================================================
+    CLS
+    LOCATE 5, 1
+    PRINT "File to be processed: "; FileName$
+    FileName$ = UCASE$(LTRIM$(RTRIM$(FileName$)))
+    IF RIGHT$(FileName$, 4) = ".BAK" THEN
+        CLS
+        PRINT "Cannot process .bak files!"
+        END
+    END IF
+    Period% = INSTR(FileName$, ".")
+    IF Period% = 0 THEN
+        OldName$ = FileName$ + ".bak"
+    ELSE
+        OldName$ = LEFT$(FileName$, Period%) + "bak"
+    END IF
+    NAME FileName$ AS OldName$
+    InFile% = FREEFILE
+    OPEN OldName$ FOR INPUT AS #InFile%
+    OutFile% = FREEFILE
+    OPEN FileName$ FOR OUTPUT AS #OutFile%
+    DO
+        LINE INPUT #InFile%, Work$
+        Work$ = RTRIM$(Work$)
+        PRINT #OutFile%, Work$
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+'****************************************************************************
+'   End of RTRIM.BAS
+'****************************************************************************
+

@@ -1,0 +1,1855 @@
+'   MRDESSUB - Procedures for MRDES.BAS
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Version 4.21
+'============================================================================
+'   History:
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Minor source code update, mostly comments
+'============================================================================
+'   Make arrays dynamic so they can be redimensioned
+'   $DYNAMIC
+'============================================================================
+'   Record type definitions
+'----------------------------------------------------------------------------
+' Define the type needed for INTERRUPT
+
+    TYPE RegType
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+    END TYPE
+'----------------------------------------------------------------------------
+'   Define information record type
+  
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+        ProcessFlag AS STRING * 1
+        InitDate AS STRING * 10
+        EditDate AS STRING * 10
+        ProcDate AS STRING * 10
+    END TYPE
+'----------------------------------------------------------------------------
+'   Define buffer record type
+
+    TYPE DataBuffer
+        Work AS STRING * 500
+    END TYPE
+'----------------------------------------------------------------------------
+'   Repair data record type
+
+    TYPE RepairData
+        Serial AS STRING * 9
+        Code AS STRING * 5
+        Area AS STRING * 1
+        Mfr AS STRING * 2
+        ac AS STRING * 2
+    END TYPE
+'----------------------------------------------------------------------------
+'   Define purchase code lookup record type
+
+    TYPE LookUpCode
+        Mfr AS STRING * 2
+        Code AS STRING * 5
+        Ambg AS STRING * 1
+        Type1 AS STRING * 12
+        Choice1 AS STRING * 5
+        Type2 AS STRING * 12
+        Choice2 AS STRING * 5
+        Type3 AS STRING * 12
+        Choice3 AS STRING * 5
+    END TYPE
+'============================================================================
+'   Declare Procedures
+'----------------------------------------------------------------------------
+DECLARE SUB ActivityCode (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION AllCheck% (x$, Check$)
+DECLARE FUNCTION CalcDeltaAcc$ (LeftEle$, RightEle$, FinalLen%)
+DECLARE SUB CalcDemandAcc (Sfl%, Value$(), Vlen%())
+DECLARE FUNCTION CalcWeightedAve$ (Full$, Light$, StringLen%)
+DECLARE FUNCTION Check4Dupe% (DataPath$, Serial$, Align$, Vlen%, RecPos%)
+DECLARE FUNCTION CheckChars% (Value$, Cf%)
+DECLARE FUNCTION CheckDate% (Value$)
+DECLARE FUNCTION CheckDivision% (V$)
+DECLARE FUNCTION CheckFile% (DataPath$)
+DECLARE FUNCTION CheckLimits% (Value$, Limit!)
+DECLARE SUB CheckPath (Path$)
+DECLARE FUNCTION CheckSerial% (Serial$, Align$, ProcName$(), ProcName%)
+DECLARE SUB CheckTheData (Area1%, Area2%, ChkPath$, DataPath$, DateLoc%, EditRec%, Flag%, Ptr%, Sel%, Sfl%, Value%, Value$())
+DECLARE FUNCTION ChkBalance% (Left%, Limit!, Eflag%(), Estring$(), Sfl%, Value$())
+DECLARE SUB ChkRepairList ()
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE SUB ErrorString (FgClr%, BgClr%, RfgClr%, RbgClr%, Eflag%, Estring$)
+DECLARE SUB FieldEntry ()
+DECLARE SUB Funckeys (Cfg0%, Cfg1%, Cfg2%, Cfg3%, Cfg5%, Sel%, Sfl%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION GetChoice% ()
+DECLARE SUB GetEnvInfo (Office%, Bfg%, Bbg%, Cfg%(), CsrTop%, CsrBot%)
+DECLARE FUNCTION GetPurcCode$ ()
+DECLARE SUB Grab5455Acc (Work$, Look$, Ptrf%, Ptrl%)
+DECLARE FUNCTION Grab5800Acc$ (Source$, Dec%, Tlen%)
+DECLARE SUB HelpFile (FileName$, EndPrompt$)
+DECLARE SUB InitFile ()
+DECLARE SUB INTERRUPT (IntNum AS INTEGER, InReg AS RegType, OutReg AS RegType)
+DECLARE FUNCTION Julian& ()
+DECLARE FUNCTION LeftAsFound% (Eflag%(), Estring$(), OffSet%, Value$(), Vlen%())
+DECLARE SUB LoadScrn ()
+DECLARE SUB LoadWrite ()
+DECLARE FUNCTION LookUpArea$ (q$)
+DECLARE FUNCTION Mayan$ ()
+DECLARE SUB MfrLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION OneDec% (Look$)
+DECLARE SUB ParseData (Fields%, Value$(), Buffer$, Position%(), Length%(), TimeStamp$)
+DECLARE SUB ParseIndex ()
+DECLARE SUB PrintHeading (ToPrt%)
+DECLARE SUB PrintIndex (Index$, ToPrt%)
+DECLARE FUNCTION PrintMenu$ ()
+DECLARE SUB PrintScreen ()
+DECLARE FUNCTION ProcRFLAcc$ (Work$, x%)
+DECLARE FUNCTION Purchase$ (Target$, Vlen%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadDataFile ()
+DECLARE SUB ReInit ()
+DECLARE SUB RetireLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION Round$ (Incoming$, Length%, Places%)
+DECLARE SUB ToggleRepairList (RepList%)
+'----------------------------------------------------------------------------
+    COMMON Align$(), Bwd%(), Cfg%(), Default$(), Divs$(), Eflag%()
+    COMMON Estring$(), Fwd%(), Help$(), NonSpc%(), Pcol%(), Pline%()
+    COMMON Prompt$(), RecPos%(), Rinit%(), Scn$(), Value$(), Vcol%()
+    COMMON Vlen%(), Vline%(), Select$()
+    COMMON SHARED CsrTop%, CsrBot%, MDS2%, TimeStamp$, TimeStamp%, Version$
+    COMMON Header$, Lab$
+'============================================================================
+'   Dimension arrays
+'----------------------------------------------------------------------------
+    Items% = 100
+    DIM Align$(Items%), Bwd%(Items%), Cfg%(10), Default$(Items%)
+    DIM Divs$(25, 1), Eflag%(Items%), Estring$(Items%), Fwd%(Items%)
+    DIM Help$(Items%), NonSpc%(Items%), Pcol%(Items%), Pline%(Items%)
+    DIM Prompt$(Items%), RecPos%(Items%), Rinit%(Items%), Scn$(20)
+    DIM Value$(Items%), Vcol%(Items%), Vlen%(Items%), Vline%(Items%)
+    DIM Select$(100)
+'============================================================================
+'   These are not actually arrays, they're record types, but are declared
+'   the same way.  These two are needed for DOS function access.
+
+    DIM SHARED InRegs AS RegType, OutRegs AS RegType
+
+'   File access record types
+
+    DIM SHARED Info AS InfoRecord, DataRec AS DataBuffer, LookUp AS LookUpCode
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+
+REM $STATIC
+'****************************************************************************
+'   Function to calculate Delta series test accuracies.  Returns string value,
+'   rounded to 2 decimal places.  Returns string of FinalLen% spaces if not
+'   enough information is supplied.
+'============================================================================
+FUNCTION CalcDeltaAcc$ (LeftEle$, RightEle$, FinalLen%)
+'----------------------------------------------------------------------------
+'   Convert incoming string values to numeric.
+
+    Left! = VAL(LeftEle$)
+    Right! = VAL(RightEle$)
+
+'   If either datum is blank or zero, return spaces and exit.
+
+    IF Left! = 0 OR Right! = 0 THEN
+        CalcDeltaAcc$ = SPACE$(FinalLen%)
+        EXIT FUNCTION
+    END IF
+
+'   Calculate average, which is series value.
+
+    Accuracy! = (Left! + Right!) / 2
+ 
+'   Round to hundredths.
+
+    Accuracy! = (INT(Accuracy! * 100 + .5)) / 100
+ 
+'   Convert result to string value and format.
+
+    Accuracy$ = LTRIM$(RTRIM$(STR$(Accuracy!)))
+    CalcDeltaAcc$ = LEFT$(Accuracy$ + SPACE$(FinalLen%), FinalLen%)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   This function calculates demand accuracy, if enough information is
+'   supplied, and the demand accuracy field is blank.
+'============================================================================
+SUB CalcDemandAcc (Sfl%, Value$(), Vlen%())
+'----------------------------------------------------------------------------
+  
+'   Find source and target data entry/edit fields.
+
+    FSDemand% = Sfl% + 24
+    Required% = Sfl% + 25
+    Obtained% = Sfl% + 28
+    Accuracy% = Sfl% + 26
+ 
+'   Target field is not blank.  Exit.
+
+    IF LTRIM$(RTRIM$(Value$(Accuracy%))) <> "" THEN
+        EXIT SUB
+    END IF
+  
+    Required! = VAL(Value$(Required%))
+    Obtained! = VAL(Value$(Obtained%))
+    FSDemand! = VAL(Value$(FSDemand%))
+ 
+'   One of the source fields is blank, or has unusable data.  Correct
+'   calculation is not possible, so don't do it.
+
+    IF Required! = 0 OR Obtained! = 0 OR FSDemand! = 0 THEN
+        EXIT SUB
+    END IF
+ 
+'   If we get here, all is well, calculate the value.
+
+    Accuracy! = ABS(100 - (((Required! - Obtained!) / FSDemand!) * 100))
+ 
+'   Round to hundredths
+
+    Accuracy! = (INT(Accuracy! * 100 + .5)) / 100
+ 
+'   Convert calculated value to string and format.
+
+    Accuracy$ = LTRIM$(RTRIM$(STR$(Accuracy!)))
+    Value$(Accuracy%) = LEFT$(Accuracy$ + SPACE$(Vlen%(Accuracy%)), Vlen%(Accuracy%))
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Calculates as found weighted average from full load and light load.
+'   Formula: (4FL+LL)/5
+'   Rounds result to two decimal places and returns string representation.
+'============================================================================
+FUNCTION CalcWeightedAve$ (Full$, Light$, StringLen%)
+'----------------------------------------------------------------------------
+'   Convert incoming string values to numeric.
+
+    Full! = VAL(Full$)
+    Light! = VAL(Light$)
+ 
+'   If some information is missing, no calculation is possible.  Exit,
+'   returning a field of spaces.
+
+    IF (Full! = 0 OR Light! = 0) THEN
+        CalcWeightedAve$ = SPACE$(StringLen%)
+        EXIT FUNCTION
+    END IF
+ 
+'   Calculate, round and format the value.
+
+    Average! = (Full! * 4 + Light!) / 5
+ 
+'   Round to hundredths
+
+    Average! = (INT(Average! * 100 + .5)) / 100
+ 
+'   Convert calculated, rounded, value to string and format
+
+    Average$ = LTRIM$(RTRIM$(STR$(Average!)))
+   
+'   No decimal portion
+
+    IF INSTR(Average$, ".") = 0 AND LEN(Average$) < 4 THEN
+        Average$ = Average$ + ".00"
+    END IF
+
+'   Only one decimal place
+
+    IF LEN(Average$) - INSTR(Average$, ".") = 1 THEN
+        Average$ = Average$ + "0"
+    END IF
+
+    CalcWeightedAve$ = LEFT$(Average$ + SPACE$(StringLen%), StringLen%)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks local MRDES II file for duplicate meter records.  Checks Serial
+'   Number only.  Returns 0 if no duplicates found, 1 if duplicate found.
+'   Searches file from end to beginning as the most likely record to be a
+'   dupe is the last one currently in the file.  Serial number must be
+'   passed by value.
+'============================================================================
+FUNCTION Check4Dupe% (DataPath$, Serial$, Align$, Vlen%, RecPos%)
+'----------------------------------------------------------------------------
+
+'   Clear these two lines
+
+    Cputs SPACE$(78), 24
+    Cputs SPACE$(78), 25
+
+'   Prepare serial number
+
+    Serial$ = LTRIM$(RTRIM$(Serial$))
+    IF UCASE$(Align$) <> "I" THEN
+        SELECT CASE LTRIM$(RTRIM$(UCASE$(Align$)))
+            CASE "L0"
+                WHILE LEFT$(Serial$, 1) = "0" AND LEN(Serial$) > 1
+                    Serial$ = MID$(Serial$, 2)
+                WEND
+            CASE "R0"
+                Serial$ = RIGHT$(STRING$(Vlen%, "0") + Serial$, Vlen%)
+        END SELECT
+    END IF
+
+    Df% = FREEFILE
+  
+    OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Df% LEN = LEN(DataRec)
+
+    GET #Df%, 1, Info
+    IF Info.NumberOfRecords = 0 THEN
+        Check4Dupe% = 0
+        EXIT FUNCTION
+    END IF
+
+'   Default flag to no dupes found
+
+    Flag% = 0
+
+'   Field the buffer and set the pointer to the last record
+
+    x% = Info.NumberOfRecords
+  
+'   The actual from back to front file check
+
+    DO
+        GET #Df%, x% + 1, DataRec                       ' Get the record
+        Buffer$ = DataRec.Work
+        IF INSTR("12", LEFT$(Buffer$, 1)) > 0 THEN      ' One of ours?
+            Work$ = LTRIM$(RTRIM$(MID$(Buffer$, RecPos%, Vlen%)))
+            IF Work$ = Serial$ THEN                     ' Same serial #?
+                Flag% = 1                               ' Set the flag
+            END IF
+        END IF
+        x% = x% - 1                                     ' Move one record closer to start
+    LOOP WHILE x% > 0 AND Flag% = 0
+    CLOSE #Df%                                          ' Close the file
+    Check4Dupe% = Flag%                                 ' Return status
+
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Subroutine to check string for acceptable characters.  All local
+'   variables, nothing needed from main module, except what's passed on the
+'   calling line.  Returns 0 if all is well, 1 if not.
+'============================================================================
+FUNCTION CheckChars% (Value$, Cf%)
+'----------------------------------------------------------------------------
+
+'   Get the acceptable input characters from the aleady open file.
+
+    LINE INPUT #Cf%, Id$
+    INPUT #Cf%, Check$
+ 
+'   Call the routine from CHECKS.
+
+    CheckChars% = AllCheck%(Value$, Check$)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Function to check MRDES II data file for previous processing.  If the
+'   file has been processed, allow no processing of any kind.  Return a 0 if
+'   file has not been processed, 1 if it has been processed.
+'============================================================================
+FUNCTION CheckFile% (DataPath$)
+'----------------------------------------------------------------------------
+
+    DIM LocalInfo AS InfoRecord
+    Df% = FREEFILE
+    OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Df% LEN = LEN(DataRec)
+    GET #Df%, 1, LocalInfo
+ 
+'   If there's no file there, init it, since that's what's wanted anyway.
+
+    IF LocalInfo.NumberOfRecords = 0 THEN
+        LocalInfo.NumberOfRecords = 0       ' Probably not needed
+        LocalInfo.ProcessFlag = "U"         ' New file has not been processed
+        LocalInfo.InitDate = DATE$          ' Created today
+        PUT #Df%, 1, LocalInfo              ' MUCH nicer than a field statement!
+        CLOSE #Df%
+        CheckFile% = 0
+        EXIT FUNCTION
+    END IF
+
+'   Trouble in paradise
+
+    IF LocalInfo.ProcessFlag = "P" THEN
+        CLS
+        Cputs "Processed File.", 5
+        Cputs "No further processing will be allowed.", 10
+        Cputs "Check with supervisor immediately for instructions", 15
+        Junk$ = Get1Key$(CHR$(13), "Press ENTER to return to menu")
+        CheckFile% = 1
+    ELSE
+        CheckFile% = 0
+    END IF
+    CLOSE #Df%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Check value passed in Value$ for error less than or equal to value passed
+'   in Limit!.
+'   Returns zero if Value is within limit,
+'           one if Value is not within limit.
+'============================================================================
+FUNCTION CheckLimits% (Value$, Limit!)
+'----------------------------------------------------------------------------
+'   If there's a value there, check it.  Exit if the field is blank.
+
+    IF LTRIM$(RTRIM$(Value$)) <> "" THEN
+        Value! = VAL(Value$)
+        IF ABS(Value! - 100!) > Limit! THEN
+         
+'   Out of limits.  Set flag.
+
+            CheckLimits% = 1
+        ELSE
+         
+'   Within limits.  Clear flag.
+
+            CheckLimits% = 0
+        END IF
+     ELSE
+        CheckLimits% = 2
+     END IF
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks file path to see that it's valid, and that it has the trailing
+'   backslash.  Appends backslash if necessary.
+'============================================================================
+SUB CheckPath (Path$)
+'----------------------------------------------------------------------------
+    Colon% = INSTR(Path$, ":")
+    IF Colon% > 0 AND Colon% <> 2 THEN
+        PRINT Path$; " is invalid!"
+        x$ = INPUT$(1)
+        END
+    END IF
+    IF RIGHT$(Path$, 1) <> "\" THEN
+        Path$ = Path$ + "\"
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Open the Repair List file and find out how many records are in it.  The
+'   odd length allows direct export from Enable database to a text file which
+'   can be accessed with random (direct) access.  File is physically sorted
+'   so that a binary search technique can be used.  The maximum number of
+'   checks that need to be made to determine if a meter is in the file and
+'   find it if so is defined by the formula:
+'   int(log(Records in file)/log(2))+1
+'   This routine only reports to the operator and does not set any error or
+'   warning flags.  It is up to the operator to make the decision if and how
+'   to correct the record.
+'============================================================================
+SUB CheckRepairList (Align$(), Cfg%(), Sel%, Value$())
+'----------------------------------------------------------------------------
+
+    DIM RepData AS RepairData
+
+'   Process serial number into repairs.asc format
+
+    V$ = RIGHT$(STRING$(9, "0") + LTRIM$(RTRIM$(Value$(2))), 9)
+
+'   Open the repair list file.
+
+    RepDat% = FREEFILE
+   
+    OPEN "repairs.asc" FOR RANDOM AS #RepDat% LEN = LEN(RepData) + 2
+
+'   Set the low and high limits
+
+    Low% = 1
+
+'   A repair list record, for these purposes, is 21 characters.  The extra two
+'   that don't show in the field statement are the CR/LF pair put in the file
+'   by Enable as it wrote the file as plain text.
+
+    High% = LOF(RepDat%) \ 21 + 1
+
+'   Now check the file to see if this serial number is in it.
+
+    WHILE Serial$ <> V$ AND High% > Low% + 1
+        Rec% = (High% + Low%) \ 2
+        GET #RepDat%, Rec%, RepData
+
+        Serial$ = RepData.Serial
+        Code$ = RepData.Code
+        Area$ = RepData.Area
+        Mfr$ = RepData.Mfr
+        ActCode$ = RepData.ac
+
+'       File serial number less than MRDES serial number
+
+        IF Serial$ < V$ THEN
+            Low% = Rec%
+        END IF
+
+'       File serial number greater than MRDES serial number
+
+        IF Serial$ > V$ THEN
+            High% = Rec%
+        END IF
+    WEND
+
+'   Grab the information from the file, then close the file
+
+    s$ = Serial$
+    c$ = Code$
+    a$ = Area$
+    m$ = Mfr$
+    t$ = Td$
+    ac$ = ActCode$
+
+    CLOSE #RepDat%
+
+'   Default to no differences.
+
+    Diff% = 0
+
+'   Now see if we have a live one.
+
+    IF s$ <> V$ THEN
+        CLS
+        Cputs "Meter not found in STS file.", 10
+        Cputs "Please check to see that you have the correct serial number", 12
+        x$ = Get1Key$(CHR$(13), "Press ENTER to continue")
+        EXIT SUB
+    END IF
+
+    CLS
+    COLOR Cfg%(0), Cfg%(1)
+    Cputs "MRDES Check with STS Information", 1
+    LOCATE 5, 30, 0
+    PRINT "MRDES II       STS"
+    PutXY 6, 10, "Serial Number"
+    PutXY 6, 30, LTRIM$(RTRIM$(Value$(2)))
+    s$ = LTRIM$(RTRIM$(s$))
+    IF Align$(2) = "L0" THEN
+        WHILE LEFT$(s$, 1) = "0" AND LEN(s$) > 1
+            s$ = MID$(s$, 2)
+        WEND
+    END IF
+    PutXY 6, 45, s$
+    PutXY 7, 10, "Code"
+    PutXY 7, 30, Value$(1)
+    PutXY 7, 45, c$
+
+'   If there's a difference, identify it.
+
+    IF c$ <> Value$(1) THEN
+        Diff% = Diff% + 1
+        COLOR Cfg%(2), Cfg%(3)
+        PutXY 7, 60, "Difference"
+        COLOR Cfg%(0), Cfg%(1)
+    END IF
+
+'   For the division, all we look at is the first character in the
+'   Co/Div/Area.  It'll be a 0 or a 7
+
+    PutXY 8, 10, "Company"
+
+'   The following code takes care of any problem with leading spaces
+'   in the CoDivArea field
+
+    PutXY 8, 30, LookUpArea$(MID$(LTRIM$(Value$(3)), 1, 1))
+    PutXY 8, 45, LookUpArea$(a$)
+    IF a$ <> MID$(Value$(3), 1, 1) THEN
+        Diff% = Diff% + 1
+        COLOR Cfg%(2), Cfg%(3)
+        PutXY 8, 60, "Difference"
+        COLOR Cfg%(0), Cfg%(1)
+    END IF
+
+    PutXY 9, 10, "Mfr"
+    PutXY 9, 30, Value$(5)
+    PutXY 9, 45, m$
+    LOCATE 9, 60
+
+    Mf$ = LTRIM$(RTRIM$(Value$(5)))
+
+    IF m$ <> Mf$ THEN
+        Diff% = Diff% + 1
+        COLOR Cfg%(2), Cfg%(3)
+        PRINT "Difference"
+        COLOR Cfg%(0), Cfg%(1)
+    END IF
+
+    PutXY 10, 10, "Activity Code"
+    PutXY 10, 30, Value$(11)
+    PutXY 10, 45, ac$
+    LOCATE 10, 60
+
+    Acode$ = LTRIM$(RTRIM$(Value$(11)))
+
+    IF Acode$ <> ac$ THEN
+        Diff% = Diff% + 1
+        COLOR Cfg%(2), Cfg%(3)
+        PRINT "Difference"
+        COLOR Cfg%(0), Cfg%(1)
+    END IF
+
+'   One of these messages will tell the story.
+
+    SELECT CASE Diff%
+        CASE 0
+            IF Cfg%(6) THEN
+                EXIT SUB
+            END IF
+            Cputs "No Differences found", 20
+        CASE 1
+            COLOR Cfg%(2), Cfg%(3)
+            Cputs "1 Difference found", 20
+            COLOR Cfg%(0), Cfg%(1)
+        CASE ELSE
+            COLOR Cfg%(2), Cfg%(3)
+            Cputs STR$(Diff%) + " Differences found", 20
+            COLOR Cfg%(0), Cfg%(1)
+    END SELECT
+
+    x$ = INKEY$
+
+    x$ = Get1Key$(CHR$(13), "Press ENTER to continue")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks entered/edited data.  While this might seem to be a terse
+'   description, there are so many parts to this routine, and some of them
+'   are large and complex, they are all described by comments within the
+'   routines themselves.
+'   October, 1993 - Upgraded for MDS1/MDS2 compliance
+'============================================================================
+SUB CheckTheData (Area1%, Area2%, ChkPath$, DataPath$, DateLoc%, EditRec%, Flag%, Ptr%, Sel%, Sfl%, Value%, Value$())
+'----------------------------------------------------------------------------
+    SHARED Align$(), Cfg%(), Eflag%(), Estring$(), NonSpc%(), RecPos%(), Scn$(), Vlen%(), Vline%()
+   
+'   Get the screen color right.
+
+    COLOR Cfg%(0), Cfg%(1)
+ 
+'   Check test and test/history records for this serial number already in the
+'   file.  If it's there, don't allow addition.  Skip the check if we're
+'   editing the record.
+   
+    IF Sel% < 3 AND EditRec% = 0 THEN
+        IF Check4Dupe%(DataPath$, (Value$(2)), (Align$(2)), (Vlen%(2)), (RecPos%(2))) = 1 THEN
+            Cputs "Serial number duplicates record in file", 24
+            Flag% = 1
+            Ptr% = 2
+            Junk$ = Get1Key$(CHR$(13), "Press Enter to return to entry/edit")
+            EXIT SUB
+        END IF
+    END IF
+
+'   Clear the error flag
+
+    Flag% = 0
+
+'   If it's a retire meter, do not allow as left accuracies nor check as found
+'   accuracies for limits.  Offer operator the chance to back out.  Note that
+'   a retire meter can only be screen 1, test record.  Screen 2, test/history
+'   for a retire meter makes no sense.
+
+    IF Sel% = 1 AND LTRIM$(RTRIM$(Value$(Sfl% + 45))) <> "" THEN
+        LOCATE 24, 1, 0
+        PRINT SPACE$(79);
+        Cputs "Retire meter - As left accuracies will be cleared", 24
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), "Enter = clear accuracies and continue, Esc = return to data entry/edit")
+     
+'   Operator does not approve.  Exit.
+
+        IF Junk$ = CHR$(27) THEN
+            Flag% = 1
+            Ptr% = 1
+            EXIT SUB
+        END IF
+      
+'   Operator approves.  Clear as left accuracies
+
+        FOR x% = 0 TO 2
+            Value$(Sfl% + x% * 8 + 1) = SPACE$(Vlen%(Sfl% + x% * 8 + 1))
+            FOR y% = 5 TO 7
+                Value$(Sfl% + x% * 8 + y%) = SPACE$(Vlen%(Sfl% + x% * 8 + 1))
+            NEXT
+        NEXT
+     
+'   For MDS version 2, include KVARH accuracies
+
+        IF MDS2% = 1 THEN
+            Value$(Sfl% + 42) = SPACE$(Vlen%(Sfl% + 42))
+            Value$(Sfl% + 43) = SPACE$(Vlen%(Sfl% + 43))
+        END IF
+
+'   Clear any demand as left accuracies
+
+        Value$(Sfl% + 27) = SPACE$(Vlen%(Sfl% + 27))
+        Value$(Sfl% + 30) = SPACE$(Vlen%(Sfl% + 30))
+
+        PutXY 24, 1, SPACE$(79)
+    END IF              ' Retire meter
+ 
+'   Let operator know we're now processing the screen
+
+    PutXY 25, 1, SPACE$(79)
+    Cputs "Error check in progress", 25
+
+'   Delta meter - clear center element accuracies
+
+    IF MID$(Value$(1), 4, 1) = "8" AND Sel% < 3 THEN
+        FOR x% = 0 TO 2
+            FOR y% = 1 TO 2
+                Value$(Sfl% + x% * 8 + y% * 3) = SPACE$(Vlen%(Sfl% + x% * 8 + y% * 3))
+            NEXT
+        NEXT
+    END IF
+
+'   Check the code.  If it's not acceptable, there's no chance of any of the
+'   neat data processing working.
+
+    IF LTRIM$(RTRIM$(Value$(1))) = "" AND UCASE$(ENVIRON$("CODE")) = "NO" THEN
+        GOTO SkipCodeCheck
+    END IF
+
+'   Prefix leading zeros if necessary
+
+    IF LTRIM$(RTRIM$(Value$(1))) > "" THEN
+        Value$(1) = RIGHT$("00000" + LTRIM$(RTRIM$(Value$(1))), Vlen%(1))
+    END IF
+   
+    Chk$ = RIGHT$(Value$(1), 3)
+    IF INSTR(Chk$, " ") > 0 THEN
+        Flag% = 1
+        Eflag%(1) = 1
+        Estring$(1) = "Bad Code!"
+        GOTO ExitCheckData
+    END IF
+    Flag% = 0
+ 
+'   Socket meters - 120/240 volt
+
+    IF (Chk$ >= "000" AND Chk$ <= "029") THEN
+        Flag% = 1
+    END IF
+ 
+'   Socket meters - 480 volt
+
+    IF (Chk$ >= "100" AND Chk$ <= "119") THEN
+        Flag% = 1
+    END IF
+ 
+'   A base meters - 120/240 volt
+
+    IF (Chk$ >= "200" AND Chk$ <= "229") THEN
+        Flag% = 1
+    END IF
+ 
+'   A base meters - 480 volt
+
+    IF (Chk$ >= "300" AND Chk$ <= "319") THEN
+        Flag% = 1
+    END IF
+ 
+'   If it's a Singlephase, clear any data in individual element fields.
+
+    IF Flag% = 1 AND Sel% < 3 THEN
+        FOR x% = 2 TO 7
+            FOR y% = 0 TO 2
+                Value$(Sfl% + x% + y% * 8) = SPACE$(Vlen%(Sfl% + x% + y% * 8))
+            NEXT
+        NEXT
+    END IF
+
+SkipCodeCheck:
+
+'   Ok, get down to business and check the data.  First, open the acceptable
+'   characters data file.
+
+    ChChar% = FREEFILE
+    OPEN ChkPath$ + Scn$(Sel%) + ".ACC" FOR INPUT AS #ChChar%
+
+'   Check for invalid characters.
+
+'   Clear the error flag
+
+    Flag% = 0
+  
+    FOR Check% = 1 TO Value%
+        Eflag%(Check%) = CheckChars%(Value$(Check%), ChChar%)
+        IF Vline%(Check%) < 1 THEN
+            Eflag%(Check%) = 0
+        END IF
+        IF Eflag%(Check%) = 1 THEN
+            Flag% = 1
+            LINE INPUT #ChChar%, Estring$(Check%)
+        ELSE
+       
+'   All is well.  Clear error string, keep file pointer in line.
+
+        Estring$(Check%) = ""
+        LINE INPUT #ChChar%, Junk$
+        END IF
+    NEXT
+    CLOSE #ChChar%
+  
+    IF Flag% = 1 THEN
+        GOTO ExitCheckData
+    END IF
+
+'   Check for valid date.
+
+    Flag% = CheckDate%(Value$(DateLoc%))
+   
+    IF Flag% = 1 THEN
+        GOTO ExitCheckData
+    END IF
+
+'   Align data in field as directed by Align$().  This array directs most of
+'   MRDES II's data format capability.
+
+    FOR Check% = 1 TO Value%
+        IF Vline%(Check%) > 0 THEN
+            a$ = UCASE$(LTRIM$(RTRIM$(Align$(Check%))))
+            IF a$ <> "I" THEN
+             
+'       Left set data in field, do not remove leading zeros.
+
+                IF a$ = "L" THEN
+                    Value$(Check%) = LEFT$(LTRIM$(RTRIM$(Value$(Check%))) + SPACE$(Vlen%(Check%)), Vlen%(Check%))
+                END IF              ' a$="L"
+
+'       Left set data in field, remove leading zeros as needed.
+
+                IF a$ = "L0" THEN
+                    IF LTRIM$(RTRIM$(Value$(Check%))) <> "" THEN
+                        Value$(Check%) = LTRIM$(RTRIM$(Value$(Check%)))
+                        WHILE LEN(Value$(Check%)) > 1 AND LEFT$(Value$(Check%), 1) = "0"
+                            Value$(Check%) = MID$(Value$(Check%), 2)
+                        WEND
+                        Value$(Check%) = LEFT$(Value$(Check%) + SPACE$(Vlen%(Check%)), Vlen%(Check%))
+                    END IF          ' (Element is not blank)
+                END IF              ' a$="L0"
+                 
+'       Right set data in field, do not prefix leading zeros.
+
+                IF a$ = "R" THEN
+                    Value$(Check%) = RIGHT$(SPACE$(Vlen%(Check%)) + LTRIM$(RTRIM$(Value$(Check%))), Vlen%(Check%))
+                END IF              ' a$="R"
+
+'       Right set data in field, prefix leading zeros as needed.
+
+                IF a$ = "R0" THEN
+                    IF LTRIM$(RTRIM$(Value$(Check%))) <> "" THEN
+                        Value$(Check%) = RIGHT$(STRING$(Vlen%(Check%), "0") + LTRIM$(RTRIM$(Value$(Check%))), Vlen%(Check%))
+                    END IF          ' (Element is not blank)
+                END IF              ' a$="R0"
+              
+'   Purchase code lookup/check
+
+                IF a$ = "P" THEN
+                    IF LTRIM$(RTRIM$(Value$(Check%))) = "" THEN
+                        Value$(Check%) = Purchase$(Value$(5) + Value$(1), Vlen%(Check%))
+                    END IF
+                    IF LTRIM$(RTRIM$(Value$(Check%))) = "" THEN
+                        Eflag%(Check%) = 1
+                        Estring$(Check%) = "Bad purchase code"
+                    END IF
+                END IF
+               
+'   Mfr code lookup/check
+
+                IF a$ = "M" THEN
+                    MfrLookup Value$(Check%), Vlen%(Check%), Eflag%(Check%), Estring$(Check%)
+                END IF
+                IF a$ = "A" THEN    ' Activitiy code lookup
+                    ActivityCode Value$(Check%), Vlen%(Check%), Eflag%(Check%), Estring$(Check%)
+                END IF
+                IF a$ = "RT" THEN   ' Retire code lookup
+                    RetireLookup Value$(Check%), Vlen%(Check%), Eflag%(Check%), Estring$(Check%)
+                END IF
+            END IF                  ' a$<>"I" (Ignore)
+        END IF                      ' Process element
+    NEXT                            ' Next data array element
+
+'   Check flags to see if an error turned up during format/error check.
+'   Activity code, manufacturer code and retirement code are checked at
+'   this point.
+
+    FOR x% = 1 TO Value%
+        IF Eflag%(x%) > 0 THEN
+            Flag% = 1
+        END IF
+    NEXT
+   
+    IF Flag% = 1 THEN
+        GOTO ExitCheckData
+    END IF
+   
+    IF Sel% < 3 THEN
+      
+'   Calculate demand accuracy if it's not already done, and if there's enough
+'   information for an accurate calculation.  For KWH only meters, there's
+'   never enough data for a calculation, and the CalcDemandAcc routine handles
+'   the problem.
+
+        CalcDemandAcc Sfl%, Value$(), Vlen%()
+
+        IF LTRIM$(RTRIM$(Value$(Sfl% + 26))) = "" AND LTRIM$(RTRIM$(Value$(Sfl% + 29))) = "" THEN
+            FOR xx% = Sfl% + 24 TO Sfl% + 30
+                Value$(xx%) = SPACE$(Vlen%(xx%))
+            NEXT
+        ELSE
+           
+'   If demand accuracy as found is in place, fill in defaults for any demand
+'   information not supplied.
+
+            IF LTRIM$(RTRIM$(Value$(Sfl% + 29))) = "" THEN
+                Value$(Sfl% + 29) = RIGHT$(SPACE$(Vlen%(Sfl% + 29)) + "5", Vlen%(Sfl% + 29))
+            END IF
+
+'   As lefts only if meter not retired
+
+            IF Sel% < 3 THEN
+                IF LTRIM$(RTRIM$(Value$(Sfl% + 45))) = "" AND LTRIM$(RTRIM$(Value$(Sfl% + 26))) <> "" THEN
+                    IF LTRIM$(RTRIM$(Value$(Sfl% + 27))) = "" THEN
+                        Value$(Sfl% + 27) = LEFT$("100.0" + SPACE$(Vlen%(Sfl% + 27)), Vlen%(Sfl% + 27))
+                    END IF
+
+                    IF LTRIM$(RTRIM$(Value$(Sfl% + 30))) = "" THEN
+                        Value$(Sfl% + 30) = RIGHT$(SPACE$(Vlen%(Sfl% + 30)) + "5", Vlen%(Sfl% + 30))
+                    END IF
+                ELSE
+                    Value$(Sfl% + 27) = SPACE$(Vlen%(Sfl% + 27))
+                    Value$(Sfl% + 30) = SPACE$(Vlen%(Sfl% + 30))
+            END IF
+        END IF              ' Demand accy as found not blank
+       
+    END IF                  ' Test record
+
+'   Check for too many decimal points.
+
+    FOR x% = Sfl% TO Sfl% + 28
+        IF Vline%(x%) > 0 THEN
+            Dp% = OneDec%(Value$(x%))
+            IF Dp% > 1 THEN
+                Flag% = 1
+                Estring$(x%) = "Too many decimal points!"
+                Eflag%(x%) = 1
+            END IF
+        END IF
+    NEXT
+      
+'   Check KVARH fields for MDS 2
+
+    IF MDS2% = 1 THEN
+        FOR x% = Sfl% + 40 TO Sfl% + 43
+            IF Vline%(x%) > 0 THEN
+                Dp% = OneDec%(Value$(x%))
+                IF Dp% > 1 THEN
+                    Flag% = 1
+                    Estring$(x%) = "Too many decimal points!"
+                    Eflag%(x%) = 1
+                END IF
+            END IF
+        NEXT
+    END IF
+      
+    IF Flag% = 1 THEN
+        GOTO ExitCheckData
+    END IF
+
+'   Delta series accuracy calculations.  If the series accuracy field is
+'   blank, and the top and bottom fields have data, calculate the series value
+'   by averaging the top and bottom element fields.
+
+    IF MID$(Value$(1), 4, 1) = "8" THEN
+
+'   As found accuracies.
+      
+        FOR x% = 0 TO 2
+            IF LTRIM$(RTRIM$(Value$(Sfl% + (x% * 8)))) = "" THEN
+                IF Value$(Sfl% + 2 + (x% * 8)) <> SPACE$(Vlen%(Sfl% + 2 + (x% * 8))) THEN
+                    IF Value$(Sfl% + 4 + (x% * 8)) <> SPACE$(Vlen%(Sfl% + 4 + (x% * 8))) THEN
+                        Value$(Sfl% + (x% * 8)) = CalcDeltaAcc$(Value$(Sfl% + 2 + (x% * 8)), Value$(Sfl% + 4 + (x% * 8)), Vlen%(Sfl% + (x% * 8)))
+                    END IF      ' All data available.  Do the calculation
+                END IF          ' Left element data available.
+            END IF              ' Series field is blank.
+        NEXT                    ' As found accuracy loop
+     
+'   As left accuracies.
+
+        FOR x% = 0 TO 2
+            IF LTRIM$(RTRIM$(Value$(Sfl% + (x% * 8) + 1))) = "" THEN
+                IF LTRIM$(RTRIM$(Value$(Sfl% + 5 + (x% * 8)))) <> "" THEN
+                    IF LTRIM$(RTRIM$(Value$(Sfl% + 7 + (x% * 8)))) <> "" THEN
+                        Value$(Sfl% + (x% * 8) + 1) = CalcDeltaAcc$(Value$(Sfl% + 5 + (x% * 8)), Value$(Sfl% + 7 + (x% * 8)), Vlen%(Sfl% + 1 + (x% * 8)))
+                    END IF      ' All data available.  Do the calculation.
+                END IF          ' Left element data available.
+            END IF              ' Series field is blank.
+        NEXT                    ' As left accuracy loop
+  
+    END IF                      ' Delta meter
+
+'   Round values, if necessary, as directed by Align$().
+
+    FOR Check% = 1 TO Value%
+        IF Vline%(x%) > 0 THEN
+            a$ = LTRIM$(RTRIM$(Align$(Check%)))
+            IF a$ = "0" OR a$ = "1" OR a$ = "2" THEN
+                Value$(Check%) = Round$((Value$(Check%)), Vlen%(Check%), VAL(a$))
+            END IF
+        END IF
+    NEXT
+
+'   Calculate weighted average.  Weighted average value must be the last
+'   element in the array.
+
+    IF Sel% = 1 THEN
+        Value$(Value%) = CalcWeightedAve$(Value$(Sfl%), Value$(Sfl% + 16), Vlen%(Value%))
+    END IF
+
+'   If it's a retire meter, do not check accuracies for compliance with AEP
+'   standards.  There are no as left accuracies, and the as found accuracies
+'   may be anything.
+
+    IF LTRIM$(RTRIM$(Value$(Sfl% + 45))) <> "" THEN
+
+'   Set repair flag to Y if no as found accys... Keep this record from
+'   participating in and screwing up reports.
+
+        IF LTRIM$(RTRIM$(Value$(Value%))) = "" THEN
+            Value$(Sfl% + 31) = "Y"
+        END IF
+        GOTO CheckArea
+    END IF
+
+'   Check for as left accuracy out of limits.  If meter is left as found,
+'   check the as found fields.  LAF meters with as found accuracies out of AEP
+'   specifications get warnings, not errors.
+
+        Cflag% = LeftAsFound%(Eflag%(), Estring$(), Sfl%, Value$(), Vlen%())
+
+        OffSet% = ABS(Cflag% > 0)
+
+        FOR x% = 0 TO 2
+            Check% = Sfl% + OffSet% + (x% * 8)
+            IF x% = 1 THEN
+                Limit! = 1
+            ELSE
+                Limit! = .5
+            END IF
+            Eflag%(Check%) = CheckLimits%(Value$(Check%), Limit!)
+            IF Eflag%(Check%) = 1 THEN
+                Estring$(Check%) = "Accuracy out of limits!"
+                IF OffSet% > 0 THEN
+                    Flag% = 1
+                END IF
+            END IF
+        NEXT
+      
+'   MDS version 2 KVARH accuracy checks
+
+'   First, check that either both as left accuracies are there or that both
+'   are not there.
+
+    IF MDS2% = 1 THEN
+        IF VAL(Value$(Sfl% + 42)) > 0 THEN
+            IF VAL(Value$(Sfl% + 43)) = 0 THEN
+                Eflag%(Sfl% + 43) = 1
+                Estring$(Sfl% + 43) = "Light load accuracy REQUIRED with full load accuracy"
+                Flag% = 1
+            END IF
+        ELSE
+            IF VAL(Value$(Sfl% + 43)) > 0 THEN
+                Eflag%(Sfl% + 42) = 1
+                Estring$(Sfl% + 42) = "Full load accuracy REQUIRED with light load accuracy"
+                Flag% = 1
+            END IF
+        END IF
+
+'   Now, do the same for as found accuracies
+
+        IF VAL(Value$(Sfl% + 40)) > 0 THEN
+            IF VAL(Value$(Sfl% + 41)) = 0 THEN
+                Eflag%(Sfl% + 41) = 1
+                Estring$(Sfl% + 41) = "Light load accuracy REQUIRED with full load accuracy"
+                Flag% = 1
+            END IF
+        ELSE
+            IF VAL(Value$(Sfl% + 41)) > 0 THEN
+                Eflag%(Sfl% + 40) = 1
+                Estring$(Sfl% + 40) = "Full load accuracy REQUIRED with light load accuracy"
+                Flag% = 1
+            END IF
+        END IF
+
+'   All is not well?
+
+        IF Flag% = 1 THEN
+            GOTO ExitCheckData
+        END IF
+
+'   Ok, now do we check as found or as left?
+   
+        IF LTRIM$(RTRIM$(Value$(Sfl% + 42))) > "" THEN
+            Eflag%(Sfl% + 42) = CheckLimits%(Value$(Sfl% + 42), .5)
+            IF Eflag%(Sfl% + 42) = 1 THEN
+                Estring$(Sfl% + 42) = "Accuracy out of limits!"
+                Flag% = 1
+            END IF
+            Eflag%(Sfl% + 43) = CheckLimits%(Value$(Sfl% + 43), .5)
+            IF Eflag%(Sfl% + 43) = 1 THEN
+                Estring$(Sfl% + 43) = "Accuracy out of limits!"
+                Flag% = 1
+            END IF
+        ELSE
+            Eflag%(Sfl% + 40) = CheckLimits%(Value$(Sfl% + 40), .5)
+            IF Eflag%(Sfl% + 40) = 1 THEN
+                Estring$(Sfl% + 40) = "Accuracy out of limits!"
+                Flag% = 2
+            END IF
+            Eflag%(Sfl% + 41) = CheckLimits%(Value$(Sfl% + 41), .5)
+            IF Eflag%(Sfl% + 41) = 1 THEN
+                Estring$(Sfl% + 41) = "Accuracy out of limits!"
+                Flag% = 2
+            END IF
+        END IF
+    END IF                  ' MDS2 mode
+       
+'   Accuracy problems
+
+        IF Flag% = 1 THEN
+            GOTO ExitCheckData
+        END IF
+    END IF
+
+'   As left balance checks
+
+    IF Sel% < 3 THEN
+
+        IF LTRIM$(RTRIM$(Value$(Sfl% + 5))) <> "" THEN
+            OffSet% = 5
+        ELSE
+            OffSet% = 2
+        END IF
+
+'   Full load
+       
+        Cflag% = ChkBalance%(Sfl% + OffSet%, .5, Eflag%(), Estring$(), (Sfl%), Value$())
+      
+'   Lag load
+
+        Cflag% = Cflag% + ChkBalance%(Sfl% + OffSet% + 8, 1!, Eflag%(), Estring$(), (Sfl%), Value$())
+     
+'   Light load
+      
+        Cflag% = Cflag% + ChkBalance%(Sfl% + OffSet% + 16, 2!, Eflag%(), Estring$(), (Sfl%), Value$())
+      
+        IF Cflag% > 0 THEN
+            IF OffSet% = 5 THEN
+                Flag% = 1
+            ELSE
+                Flag% = 2
+            END IF
+            GOTO ExitCheckData
+        END IF
+
+    END IF      ' Balance checks
+
+CheckArea:
+  
+'   The use of the battery check year calculation is so remote that it's not
+'   really worth updating.  Operator will have to manually verify that
+'   division/area/storeroom information is correct.
+
+    IF Sel% = 7 THEN
+        GOTO CheckChar
+    END IF
+
+    Flag1% = CheckDivision%(Value$(Area1%))
+    IF Flag1% = 1 THEN
+        Flag% = 1
+        Estring$(Area1%) = "Not a valid area code!"
+        Eflag%(Area1%) = 1
+        GOTO ExitCheckData
+    END IF
+   
+    IF Area2% > 0 THEN
+        Flag2% = CheckDivision%(Value$(Area2%))
+        IF Flag2% = 1 THEN
+            Flag% = 1
+            Estring$(Area2%) = "Not a valid area code!"
+            Eflag%(Area2%) = 1
+            GOTO ExitCheckData
+        END IF
+    END IF
+   
+    IF Value$(Area1%) = Value$(Area2%) THEN
+        Flag% = 1
+        Eflag%(Area1%) = 1
+        Estring$(Area1%) = "Cannot transfer to the same division!"
+        Eflag%(Area2%) = 1
+        Estring$(Area2%) = "Cannot transfer to the same division!"
+        GOTO ExitCheckData
+    END IF
+ 
+'   Check for at least some characters in field
+
+CheckChar:
+
+    FOR x% = 1 TO Value%
+        IF NonSpc%(x%) > 0 THEN
+            NonSpc% = 0
+            FOR y% = 1 TO LEN(Value$(x%))
+                IF MID$(Value$(x%), y%, 1) <> CHR$(32) THEN
+                    NonSpc% = NonSpc% + 1
+                END IF
+            NEXT
+            IF NonSpc% < NonSpc%(x%) THEN
+                Flag% = 1
+                Eflag%(x%) = 1
+                Estring$(x%) = "Not enough characters in field"
+            END IF
+        END IF
+    NEXT
+
+'   Check damage and defect codes for dupes.  Do not check if field is blank.
+
+'   Damage codes first
+
+    Work% = Sfl% + 32
+   
+'   Sort
+   
+    IF Value$(Work% + 1) > Value$(Work% + 2) THEN
+        SWAP Value$(Work% + 1), Value$(Work% + 2)
+    END IF
+   
+    IF Value$(Work%) > Value$(Work% + 1) THEN
+        SWAP Value$(Work%), Value$(Work% + 1)
+    END IF
+   
+    IF Value$(Work% + 1) > Value$(Work% + 2) THEN
+        SWAP Value$(Work% + 1), Value$(Work% + 2)
+    END IF
+
+    IF LTRIM$(RTRIM$(Value$(Work%))) = "" THEN
+        IF LTRIM$(RTRIM$(Value$(Work% + 1))) > "" THEN
+            SWAP Value$(Work%), Value$(Work% + 1)
+        ELSE
+            IF LTRIM$(RTRIM$(Value$(Work% + 2))) > "" THEN
+                SWAP Value$(Work%), Value$(Work% + 2)
+            END IF
+        END IF
+    END IF
+    IF LTRIM$(RTRIM$(Value$(Work% + 1))) = "" THEN
+        IF LTRIM$(RTRIM$(Value$(Work% + 2))) > "" THEN
+            SWAP Value$(Work% + 1), Value$(Work% + 2)
+        END IF
+    END IF
+
+'   Now check for dupes
+
+    IF LTRIM$(RTRIM$(Value$(Work%))) > "" THEN
+        IF Value$(Work%) = Value$(Work% + 1) THEN
+            Flag% = 1
+            Eflag%(Work%) = 1
+            Estring$(Work%) = "Duplicate damage code"
+            Eflag%(Work% + 1) = 1
+            Estring$(Work% + 1) = "Duplicate damage code"
+        END IF
+        IF Value$(Work%) = Value$(Work% + 2) THEN
+            Flag% = 1
+            Eflag%(Work%) = 1
+            Estring$(Work%) = "Duplicate damage code"
+            Eflag%(Work% + 2) = 1
+            Estring$(Work% + 2) = "Duplicate damage code"
+        END IF
+        IF LTRIM$(RTRIM$(Value$(Work% + 1))) > "" THEN
+            IF Value$(Work% + 1) = Value$(Work% + 2) THEN
+            Eflag%(Work% + 1) = 1
+            Estring$(Work% + 1) = "Duplicate damage code"
+            Eflag%(Work% + 2) = 1
+            Estring$(Work% + 2) = "Duplicate damage code"
+            END IF
+        END IF
+    END IF
+
+'   Defect codes now
+
+    Work% = Sfl% + 35
+  
+'   Sort
+  
+    IF Value$(Work% + 1) > Value$(Work% + 2) THEN
+        SWAP Value$(Work% + 1), Value$(Work% + 2)
+    END IF
+   
+    IF Value$(Work%) > Value$(Work% + 1) THEN
+        SWAP Value$(Work%), Value$(Work% + 1)
+    END IF
+   
+    IF Value$(Work% + 1) > Value$(Work% + 2) THEN
+        SWAP Value$(Work% + 1), Value$(Work% + 2)
+    END IF
+
+    IF LTRIM$(RTRIM$(Value$(Work%))) = "" THEN
+        IF LTRIM$(RTRIM$(Value$(Work% + 1))) > "" THEN
+            SWAP Value$(Work%), Value$(Work% + 1)
+        ELSE
+            IF LTRIM$(RTRIM$(Value$(Work% + 2))) > "" THEN
+                SWAP Value$(Work%), Value$(Work% + 2)
+            END IF
+        END IF
+    END IF
+    IF LTRIM$(RTRIM$(Value$(Work% + 1))) = "" THEN
+        IF LTRIM$(RTRIM$(Value$(Work% + 2))) > "" THEN
+            SWAP Value$(Work% + 1), Value$(Work% + 2)
+        END IF
+    END IF
+
+'   Now check for dupes
+
+    IF LTRIM$(RTRIM$(Value$(Work%))) > "" THEN
+        IF Value$(Work%) = Value$(Work% + 1) THEN
+            Flag% = 1
+            Eflag%(Work%) = 1
+            Estring$(Work%) = "Duplicate defect code"
+            Eflag%(Work% + 1) = 1
+            Estring$(Work% + 1) = "Duplicate defect code"
+        END IF
+        IF Value$(Work%) = Value$(Work% + 2) THEN
+            Flag% = 1
+            Eflag%(Work%) = 1
+            Estring$(Work%) = "Duplicate defect code"
+            Eflag%(Work% + 2) = 1
+            Estring$(Work% + 2) = "Duplicate defect code"
+        END IF
+        IF LTRIM$(RTRIM$(Value$(Work% + 1))) > "" THEN
+            IF Value$(Work% + 1) = Value$(Work% + 2) THEN
+            Eflag%(Work% + 1) = 1
+            Estring$(Work% + 1) = "Duplicate defect code"
+            Eflag%(Work% + 2) = 1
+            Estring$(Work% + 2) = "Duplicate defect code"
+            END IF
+        END IF
+    END IF
+
+'   If something's amiss, report it, and exit.
+
+ExitCheckData:
+
+    IF Flag% > 0 THEN
+        Ptr% = 0
+        FOR x% = 1 TO Value%
+            IF Eflag%(x%) > 0 AND Ptr% = 0 THEN
+                Ptr% = x%
+            END IF
+        NEXT
+        IF Ptr% = 0 THEN
+            Ptr% = 1
+        END IF
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks individual element balances.  Sets error flags and defines error
+'   strings as necessary.  Returns 0 if elements check within balance, 1 if
+'   not.
+'============================================================================
+FUNCTION ChkBalance% (Left%, Limit!, Eflag%(), Estring$(), Sfl%, Value$())
+'----------------------------------------------------------------------------
+ 
+'   Convert string data to single precision numeric.
+
+    LeftElement! = VAL(Value$(Left%))
+    CenterElement! = VAL(Value$(Left% + 1))
+    RightElement! = VAL(Value$(Left% + 2))
+  
+'   Default error flag to clear.
+
+    Flag% = 0
+  
+    FOR x% = 0 TO 2
+        Eflag%(Left% + x%) = 0
+        Estring$(Left% + x%) = ""
+    NEXT
+ 
+    BalProb$ = "Balance Problem"
+
+'   Left/Center Element Check
+
+    IF LeftElement! > 0 AND CenterElement! > 0 AND ABS(LeftElement! - CenterElement!) > 1! THEN
+        Eflag%(Left%) = 1
+        Estring$(Left%) = BalProb$
+        Eflag%(Left% + 1) = 1
+        Estring$(Left% + 1) = BalProb$
+        Flag% = 1
+    END IF
+
+'   Left/Right Element Check
+
+    IF LeftElement! > 0 AND RightElement! > 0 AND ABS(LeftElement! - RightElement!) > Limit! THEN
+        Eflag%(Left%) = 1
+        Estring$(Left%) = BalProb$
+        Eflag%(Left% + 2) = 1
+        Estring$(Left% + 2) = BalProb$
+        Flag% = 1
+    END IF
+
+'   Center/Right Element Check
+
+    IF CenterElement! > 0 AND RightElement! > 0 AND ABS(CenterElement! - RightElement!) > 1! THEN
+        Eflag%(Left% + 1) = 1
+        Estring$(Left% + 1) = BalProb$
+        Eflag%(Left% + 2) = 1
+        Estring$(Left% + 2) = BalProb$
+        Flag% = 1
+    END IF
+    ChkBalance% = Flag%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Diagnostic subroutine
+'============================================================================
+SUB DumpEntry (Ptr%)
+'----------------------------------------------------------------------------
+'   Borrow what we need from the main module.
+
+    SHARED Align$(), Area1%, Area2%, Bwd%(), Cfg%(), DateLoc%, Default$()
+    SHARED Eflag%(), Estring$(), Fwd%(), Help$(), NonSpc%(), Pcol%(), Pline%()
+    SHARED Prompt$(), Prompt%, RecPos%(), Rinit%(), Scn$(), ScnPath$, Sel%
+    SHARED Sfl%, Title$, Value%, Vcol%(), Vlen%(), Vline%()
+ 
+    SCREEN , , 1, 1
+    COLOR Cfg%(0), Cfg%(1)
+    CLS
+
+    PRINT "Prompt screen line --- "; Pline%(Ptr%)
+    PRINT "Prompt screen column - "; Pcol%(Ptr%)
+    PRINT "Prompt text ---------- "; Prompt$(Ptr%)
+    PRINT
+
+    PRINT "Datum screen line ------------------ "; Vline%(Ptr%)
+    PRINT "Datum screen column -----------------"; Vcol%(Ptr%)
+    PRINT "Datum length ----------------------- "; Vlen%(Ptr%)
+    PRINT "Next field number ------------------ "; Fwd%(Ptr%)
+    PRINT "Previous field number -------------- "; Bwd%(Ptr%)
+    IF LEFT$(Help$(Ptr%), 1) = "@" THEN
+        PRINT "Point and shoot selection filename - "; MID$(Help$(Ptr%), 2)
+    ELSE
+        PRINT "Help filename ---------------------- "; Help$(Ptr%)
+    END IF
+    PRINT "Datum position in data file record - "; RecPos%(Ptr%)
+    PRINT
+    SELECT CASE Rinit%(Ptr%)
+        CASE 0
+            PRINT "Field not reinitialized between records"
+        CASE 1
+            PRINT "Field reinitialized to spaces between records"
+        CASE 2
+            PRINT "Field reinitialized to supplied data between records"
+    END SELECT
+    PRINT "Minimum number of non space characters required - "; NonSpc%(Ptr%)
+    PRINT "Data for reinit --------------------------------- "; Default$(Ptr%)
+    PRINT
+    PRINT "MRDES II formatting directive ------------ "; Align$(Ptr%)
+    PRINT "MRDES II formatting action - "
+    SELECT CASE UCASE$(LTRIM$(RTRIM$(Align$(Ptr%))))
+        CASE "0"
+            PRINT " --- Round to integer, left set datum in field"
+        CASE "1"
+            PRINT " --- Round to tenths, left set datum in field"
+        CASE "2"
+            PRINT " --- Round to hundredths, left set datum in field"
+        CASE "I"
+            PRINT " --- Ignore field"
+        CASE "L"
+            PRINT " --- Left set datum in field"
+        CASE "L0"
+            PRINT " --- Left set datum in field, remove any leading zeros"
+        CASE "R"
+            PRINT " --- Right set datum in field"
+        CASE "R0"
+            PRINT " --- Right set datum in field, prefix leading zeros as needed."
+        CASE "P"
+            PRINT " --- Purchase code lookup field"
+        CASE "M"
+            PRINT " --- Mfr code check field"
+        CASE "A"
+            PRINT " --- Activity code check field"
+        CASE "RT"
+            PRINT " --- Retire code check field"
+        CASE ELSE
+            PRINT " --- ???"
+    END SELECT
+
+    IF Eflag%(Ptr%) > 0 THEN
+        PRINT "Error flag set"
+        PRINT Estring$(Ptr%)
+    END IF
+
+    PRINT "Stack space available "; FRE(-2), "Memory available "; FRE(1)
+    MDate$ = Mayan$
+    MDate$ = MID$(MDate$, INSTR(MDate$, ":") + 1)
+    PRINT "System date:"; DATE$; ":"; LTRIM$(RTRIM$(STR$(Julian&))); ":"; LTRIM$(MDate$)
+    PRINT "System time:"; TIME$
+    Junk$ = Get1Key$(CHR$(13), "Press Enter to return to data entry/edit")
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   This function prints the error string, if any, when an entry/edit field
+'   is selected.  No global variables used.
+'============================================================================
+SUB ErrorString (FgClr%, BgClr%, RfgClr%, RbgClr%, Eflag%, Estring$)
+'----------------------------------------------------------------------------
+    COLOR FgClr%, BgClr%
+    PutXY 24, 1, SPACE$(79)
+    IF Eflag% THEN
+        Cputs Estring$, 24
+    END IF
+    COLOR RfgClr%, RbgClr%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print short function key help message.  Key number is in normal color,
+'   function in reverse
+'============================================================================
+SUB Funckeys (Cfg0%, Cfg1%, Cfg2%, Cfg3%, Cfg5%, Sel%, Sfl%)
+'----------------------------------------------------------------------------
+  
+    COLOR Cfg0%, Cfg1%
+    PutXY 25, 1, SPACE$(79)
+    PutXY 25, 1, "1"
+    COLOR Cfg2%, Cfg3%
+    PRINT "WRITE  ";
+    COLOR Cfg0%, Cfg1%
+    PRINT "2";
+    COLOR Cfg2%, Cfg3%
+    PRINT "MENU   ";
+    COLOR Cfg0%, Cfg1%
+    PRINT "3";
+    COLOR Cfg2%, Cfg3%
+
+'   This option is meaningless on anything but test screens.
+
+    IF Sel% > 2 OR Sfl% = 0 THEN
+        PRINT "       ";
+    ELSE
+        PRINT "SER FL ";
+    END IF
+    COLOR Cfg0%, Cfg1%
+    PRINT "4";
+    COLOR Cfg2%, Cfg3%
+
+'   Data transfer for test screens, if selected.
+
+    IF Sel% > 2 OR Cfg5% = 0 THEN
+        PRINT "       ";
+    ELSE
+        PRINT "DAT TRF";
+    END IF
+    COLOR Cfg0%, Cfg1%
+    PRINT "5";
+    COLOR Cfg2%, Cfg3%
+    PRINT "NXT FLD";
+    COLOR Cfg0%, Cfg1%
+    PRINT "6";
+    COLOR Cfg2%, Cfg3%
+    PRINT "PRV FLD";
+    COLOR Cfg0%, Cfg1%
+    PRINT "7";
+    COLOR Cfg2%, Cfg3%
+    PRINT "CSR FWD";
+    COLOR Cfg0%, Cfg1%
+    PRINT "8";
+    COLOR Cfg2%, Cfg3%
+    PRINT "CSR BWD";
+    COLOR Cfg0%, Cfg1%
+    PRINT "9";
+    COLOR Cfg2%, Cfg3%
+    PRINT "1ST FLD";
+    COLOR Cfg0%, Cfg1%
+    PRINT "0";
+    COLOR Cfg2%, Cfg3%
+    PRINT "HELP";
+    COLOR Cfg0%, Cfg1%
+    LOCATE , , 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks MRDESII environment variable for overrides.
+'============================================================================
+SUB GetEnvInfo (Office%, Bfg%, Bbg%, Cfg%(), CsrTop%, CsrBot%)
+'----------------------------------------------------------------------------
+'   Get environment variable
+
+    Work$ = ENVIRON$("MRDESII")
+  
+'   If variable exists, parse information we need and set up as directed.
+
+    IF Work$ <> "" THEN
+        IF UCASE$(LEFT$(Work$, 6)) = "OFFICE" THEN
+            Office% = 1
+        END IF
+        IF LEN(Work$) > 9 THEN
+            Bfg% = VAL(MID$(Work$, 7, 2)) MOD 16
+            Bbg% = VAL(MID$(Work$, 9, 2)) MOD 16
+            IF Bfg% = Bbg% THEN
+                Bfg% = Cfg%(0)              ' If mistake has been made,
+                Bbg% = Cfg%(1)              ' default to normal colors.
+            END IF
+            IF LEN(Work$) > 13 THEN
+                CsrTop% = VAL(MID$(Work$, 11, 2)) MOD 8  ' Allow cursor size to
+                CsrBot% = VAL(MID$(Work$, 13, 2)) MOD 8  ' be set with eviron var.
+            END IF
+        END IF
+    END IF              ' MRDESII environment variable set
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Reads and prints help file on screen one screen at a time.
+'============================================================================
+SUB HelpFile (FileName$, EndPrompt$)
+'----------------------------------------------------------------------------
+  
+    SCREEN , , 1, 1
+    CLS
+
+    HelpFil% = FREEFILE
+    OPEN FileName$ FOR INPUT AS #HelpFil%
+    LOCATE , , 0
+    DO
+        LINE INPUT #HelpFil%, Help$
+     
+'   Stop at end of each screen
+
+        IF LTRIM$(RTRIM$(UCASE$(Help$))) = "PAGE BREAK" THEN
+            x$ = Get1Key$(CHR$(13) + CHR$(27), "Press ENTER for next screen, ESC to exit help")
+            CLS
+            LOCATE , , 0
+        ELSE
+            PRINT Help$
+        END IF
+        IF x$ = CHR$(27) THEN EXIT DO
+        LOOP UNTIL EOF(HelpFil%)
+    CLOSE
+    IF x$ <> CHR$(27) THEN
+        x$ = Get1Key$(CHR$(13), EndPrompt$)
+    END IF
+    CLS
+    LOCATE , , 1, CsrTop%, CsrBot%
+    SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Initialize subprogram.  Init data array as directed by the following:
+'       Rinit%(x%)=0 - Initialize element to spaces
+'       Rinit%(x%)=1 - Initialize element to spaces
+'       Rinit%(x%)=2 - Init element to supplied data in Default$()
+'============================================================================
+SUB InitStrings (DateLoc%, Default$(), Rinit%(), Value$(), Value%, Vlen%())
+'----------------------------------------------------------------------------
+ 
+'   Initialize array elements as directed by value of Rinit%()
+
+    FOR x% = 1 TO Value%
+        IF LTRIM$(RTRIM$(Default$(x%))) <> "" THEN
+            Value$(x%) = LEFT$(Default$(x%) + SPACE$(Vlen%(x%)), Vlen%(x%))
+        ELSE
+            Value$(x%) = SPACE$(Vlen%(x%))
+        END IF
+    NEXT
+ 
+'   Initialize date to the computer's current date, if desired.
+  
+    IF DateLoc% > 0 THEN
+        Value$(DateLoc%) = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+    END IF
+
+    TimeStamp$ = SPACE$(16)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints directory of records on disk heading on screen or paper as
+'   determined by information passed in ToPrt%.
+'============================================================================
+SUB PrintHeading (ToPrt%)
+'----------------------------------------------------------------------------
+    SHARED Header$, Lab$
+    IF ToPrt% = 0 THEN
+        CLS
+        PRINT TAB(7); "#### Type    Code    Meter Serial    Mfr         Area"
+    ELSE
+        LPRINT TAB(7); "#### Type    Code    Meter Serial    Mfr         Area"
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Copy RFL transfer accuracy into correct array elements.
+'============================================================================
+FUNCTION ProcRFLAcc$ (Work$, x%)
+'----------------------------------------------------------------------------
+    x$ = MID$(Work$, x%, 7)                 ' Grab the value
+    IF x$ <> SPACE$(LEN(x$)) THEN           ' If there's something here....
+        x$ = LTRIM$(RTRIM$(x$))
+        FOR y% = 1 TO LEN(x$)
+            IF INSTR("0123456789. ", MID$(x$, y%, 1)) = 0 THEN
+                MID$(x$, y%, 1) = " "
+            END IF
+        NEXT
+    END IF
+    ProcRFLAcc$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Restores field to default data.
+'============================================================================
+SUB RestoreDefault (Value$, Default$, Ptr%, Vlen%)
+'----------------------------------------------------------------------------
+    Value$ = LEFT$(Default$ + SPACE$(Vlen%), Vlen%)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Restores function key summaries, sets colors, locates cursor, sets pointer
+'   to first data field position and prints error message, if any.
+'============================================================================
+SUB RestoreScreen (Cfg%(), DataLoc%, Eflag%(), Estring$(), Ptr%, Sel%, Sfl%, Vcol%(), Vline%())
+'----------------------------------------------------------------------------
+    ErrorString Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Eflag%(Ptr%), Estring$(Ptr%)
+    Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+    COLOR Cfg%(2), Cfg%(3)
+    LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+    DataLoc% = 1
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Rounds variable passed in Incoming$ to Places% decimal places, returns
+'   string Length% long.
+'============================================================================
+FUNCTION Round$ (Incoming$, Length%, Places%)
+'----------------------------------------------------------------------------
+  
+    Incoming! = VAL(Incoming$)
+ 
+'   If the value's zero, split
+
+    IF Incoming! = 0 THEN
+        Round$ = Incoming$
+        EXIT FUNCTION
+    END IF
+ 
+'   This next does the actual rounding, then conversion back to a string
+
+    Power% = 10 ^ Places%
+    Result! = (INT(Incoming! * Power% + .5)) / Power%
+    Result$ = LTRIM$(RTRIM$(STR$(Result!)))
+ 
+'   If it's an integer, job's done.  Format the string and split.
+
+    IF Places% = 0 THEN
+        Round$ = LEFT$(Result$ + SPACE$(Length%), Length%)
+        EXIT FUNCTION
+    END IF
+
+'   Get string length and decimal point location
+
+    ResLen% = LEN(Result$)
+    DecPt% = INSTR(Result$, ".")
+  
+'   Value is floating point, but happens to be an exact integer. Since I've
+'   gone to the trouble to allow for it, it'll probably never happen in
+'   service.  If I hadden't, we'd get nothing but.
+
+    IF DecPt% = 0 THEN
+        Round$ = LEFT$(Result$ + "." + STRING$(Places%, "0") + SPACE$(Length%), Length%)
+        EXIT FUNCTION
+    END IF
+ 
+'   No exact binary representation for .9!  What a bummer.
+
+    IF ResLen% - DecPt% > Places% THEN
+        Result$ = LEFT$(Result$, DecPt% + Places%)
+        ResLen% = LEN(Result$)
+    END IF
+
+'   At this point, either enough characters trail the decimal point, or not.
+'   Fix it, if necessary, format the string and fall off the function end.
+
+    IF ResLen% - DecPt% < Places% THEN
+        Round$ = LEFT$(Result$ + "0" + SPACE$(Length%), Length%)
+    ELSE
+        Round$ = LEFT$(Result$ + SPACE$(Length%), Length%)
+    END IF
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Toggles repair list check flag.  If flag is on, turns it off, with no
+'   other checking needed or done.  If flag is off, checks for valid file
+'   before toggle.  If no repairs.asc file is found, or file is defined not to
+'   be checked, reports problem and does not set flag.
+'============================================================================
+SUB ToggleRepairList (RepList%)
+'----------------------------------------------------------------------------
+    CLS
+    IF RepList% = 1 THEN
+        RepList% = 0
+        EXIT SUB
+    END IF
+    Df% = FREEFILE
+    OPEN "repairs.asc" FOR BINARY AS #Df%
+    IF LOF(Df%) = 0 THEN
+        CLOSE #Df%
+        KILL "repairs.asc"
+        Cputs "No Repair List file in directory.", 10
+        Junk$ = Get1Key$(CHR$(13), "Press Enter to return to menu.")
+        EXIT SUB
+    END IF
+    Junk$ = INPUT$(2, #Df%)
+    CLOSE #Df%
+    IF UCASE$(Junk$) = "NO" THEN
+        Cputs "Repair List file defined not to be used.", 10
+        Cputs "(First two characters in file are the word NO)", 15
+        Junk$ = Get1Key$(CHR$(13), "Press Enter to return to menu.")
+        EXIT SUB
+    END IF
+    RepList% = 1
+'****************************************************************************
+END SUB
+

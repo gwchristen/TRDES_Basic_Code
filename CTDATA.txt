@@ -1,0 +1,552 @@
+'   $TITLE: 'CTDATA - Input and Edit CT Data'
+'   Version 9.00
+'   Transformer Record Data Entry System
+'   K. W. Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   May, 1996
+'       Source code cleanup
+'   July, 1996
+'       Updated to all AEP Region Codes
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB ACode ()
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE SUB DamageCodes ()
+DECLARE SUB DefectCodes ()
+DECLARE SUB DisplayKeys (Xfer%, Mfg%, Mbg%, Dfg%, Dbg%)
+DECLARE SUB FuncKeys ()
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION GetVSelection$ (Length%, FileName$, Select$())
+DECLARE SUB MfrCode ()
+DECLARE SUB MoveFieldPointer (Ptr%, Work%(), Vline%())
+DECLARE SUB PrtScrn (Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), Count%, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, Number%)
+DECLARE SUB Puts (Message$, Row%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB RetireCodes ()
+DECLARE SUB XferData ()
+'============================================================================
+'   $INCLUDE: 'CTDIMCOM.INC'
+'============================================================================
+'   Version check
+'----------------------------------------------------------------------------
+	IF COMMAND$ <> "" AND LEFT$(UCASE$(LTRIM$(COMMAND$)), 1) = "V" THEN
+		PRINT "Current Transformer Data Entry/Edit Utility - Version 9.00"
+		END
+	END IF
+	Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   Turn on error trapping.
+'----------------------------------------------------------------------------
+	ON ERROR GOTO NetProblem
+'============================================================================
+'   If returning from CTCHECK, skip variable initialization.
+'----------------------------------------------------------------------------
+	IF CallPrg% = 2 THEN
+		GOTO SkipInit
+	END IF
+   
+'   We just edited and saved a record.  Return to menu.
+
+	IF EdRec% > 0 AND CallPrg% = 1 THEN
+		CHAIN "CTMENU"
+	END IF
+   
+	IF EdRec% > 0 THEN
+		GOTO SkipInit
+	END IF
+   
+	IF CallPrg% = 4 THEN
+		GOTO PartInit
+	END IF
+
+'   Initialize Value Strings
+
+	FOR x% = 1 TO 60
+		Value$(x%) = SPACE$(Alen%(x%))
+	NEXT
+
+'   When we initialize the code field, put the C at the start.  When the
+'   entry screen is printed, the cursor is put in the second character.
+
+	Value$(1) = LEFT$("C" + SPACE$(Alen%(1)), Alen%(1))
+	Value$(53) = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+	Value$(15) = RIGHT$(SPACE$(Alen%(15)) + ":1", Alen%(15))
+   
+	FOR x% = 17 TO 22
+		Value$(x%) = SPACE$(Alen%(x%))
+	NEXT
+
+PartInit:
+
+	Value$(3) = SPACE$(Alen%(3))    ' Mfg Serial Number
+	Value$(9) = "Y"                 ' Dielectric check flag
+	Value$(12) = SPACE$(Alen%(12))  ' Scrap Flag
+	Value$(13) = SPACE$(Alen%(13))  ' Remarks
+
+	FOR x% = 29 TO 52
+		Value$(x%) = SPACE$(Alen%(x%))
+	NEXT
+
+	FOR x% = 55 TO 60
+		Value$(x%) = SPACE$(Alen%(x%))
+	NEXT
+
+SkipInit:
+
+	PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 60, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 60
+	DisplayKeys 1, Mfg%, Mbg%, Dfg%, Dbg%
+   
+'============================================================================
+'   Input loop
+'----------------------------------------------------------------------------
+	COLOR Dfg%, Dbg%
+   
+	Ptr% = 1
+
+	x$ = UCASE$(INKEY$)             ' Clear INKEY buffer
+
+	LOCATE Arow%(Ptr%), Acol%(Ptr%) + 1, 1, 0, 7
+
+	Pointer% = 2
+
+WaitForInput:
+
+'   Get the input
+
+	DO
+		x$ = UCASE$(INKEY$)
+	LOOP WHILE x$ = ""
+   
+'   Cursor, function or shift tab key
+
+	IF LEN(x$) > 1 THEN
+		SELECT CASE ASC(RIGHT$(x$, 1))
+			CASE 15, 64, 72             ' Shift/Tab, F6 or Up arrow
+				GOSUB MoveToPrev        ' Move to previous entry/edit field
+			CASE 46, 83                 ' Alt/C or Del key clears the field
+				Value$(Ptr%) = SPACE$(Alen%(Ptr%))
+				Pointer% = 1
+				PutXY Arow%(Ptr%), Acol%(Ptr%), Value$(Ptr%)
+				LOCATE , , 0
+				LOCATE Arow%(Ptr%), Acol%(Ptr%), 1, 0, 7
+				GOTO WaitForInput
+			CASE 59                     ' F1 - Write record to the disk
+				Flag% = 0
+				CallPrg% = 1
+				CHAIN "CTCHECK"
+			CASE 60                     ' F2 - Discard screen, return to menu
+				GOSUB Escape
+			CASE 61                     ' F3 - Data transfer
+				COLOR Mfg%, Mbg%
+				XferData
+				GOTO SkipInit
+			CASE 63, 80                 ' F5 or Down arrow
+				GOSUB MoveToNext        ' Move to next entry/edit field
+			CASE 65, 77                 ' F7 or Right arrow
+				GOSUB MoveFwd           ' Move one character position fwd
+			CASE 66, 75                 ' F8 or Left arrow
+				GOSUB MoveBwd           ' Move one character position bwd
+			CASE 67, 71                 ' Home or F9
+				GOSUB HomeC             ' First field
+			CASE 68                     ' F10 - Help
+				COLOR Mfg%, Mbg%
+				CLS
+				SELECT CASE Ptr%
+					CASE 2
+						Temp$ = GetVSelection$(Alen%(Ptr%), "ACTIVITY", Select$())
+						IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+							Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Alen%(Ptr%)), Alen%(Ptr%))
+						END IF
+					CASE 4
+						Temp$ = GetVSelection$(Alen%(Ptr%), "MFR", Select$())
+						IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+							Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Alen%(Ptr%)), Alen%(Ptr%))
+						END IF
+					CASE 10
+						Temp$ = GetVSelection$(Alen%(Ptr%), "REGION", Select$())
+						IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+							Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Alen%(Ptr%)), Alen%(Ptr%))
+						END IF
+					CASE 12
+						RetireCodes
+					CASE 55 TO 57
+						DamageCodes
+					CASE 58 TO 60
+						DefectCodes
+					CASE ELSE
+						FuncKeys
+				END SELECT
+  
+				PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 60, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 60
+			   
+				DisplayKeys 1, Mfg%, Mbg%, Dfg%, Dbg%
+  
+				LOCATE Arow%(Ptr%), Acol%(Ptr%), 1, 0, 7
+			   
+				GOTO WaitForInput
+			CASE 93                     ' shift/F10 - Check repair list
+				SHELL "RepList"
+				GOTO SkipInit
+		END SELECT
+	END IF
+
+'   Perform error check on Esc key
+   
+	IF x$ = CHR$(27) THEN               ' Error check only.
+		Flag% = 1
+		CallPrg% = 1
+		CHAIN "CTCHECK"
+	END IF
+
+'   Enter and Tab = F5
+   
+	IF x$ = CHR$(9) OR x$ = CHR$(13) THEN
+		GOSUB MoveToNext
+	END IF
+
+'   BackSpace = F8
+   
+	IF x$ = CHR$(8) THEN
+		GOSUB MoveBwd
+	END IF
+
+'   Acceptable input?
+   
+	IF ASC(x$) < 32 OR ASC(x$) > 90 THEN
+		GOTO WaitForInput
+	END IF
+
+'   Acceptable key.  Process it.
+   
+	MID$(Value$(Ptr%), Pointer%, 1) = x$
+   
+	LOCATE , , 0
+	Pointer% = Pointer% + 1
+	PRINT x$;
+	IF Pointer% <= Alen%(Ptr%) THEN
+		LOCATE , , 1, 0, 7
+	ELSE
+		MoveFieldPointer Ptr%, Fwd%(), Arow%()
+		Pointer% = 1
+		LOCATE Arow%(Ptr%), Acol%(Ptr%), 1, 0, 7
+	END IF
+	GOTO WaitForInput
+
+'   End of input loop
+'============================================================================
+'   Subroutines begin here
+'============================================================================
+'   Function key 2 - Return to menu
+Escape:
+	COLOR Mfg%, Mbg%
+	x$ = Get1Key$("YN", "Are you sure you want to return to the menu?(Y/N)")
+	IF x$ = "Y" THEN
+		CallPrg% = 1
+		CHAIN "CTMENU"
+	END IF
+
+'   User changed mind or hit wrong key.  Regenerate screen and return
+
+	PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 60, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 60
+	DisplayKeys 1, Mfg%, Mbg%, Dfg%, Dbg%
+	
+	GOTO HomeC
+'----------------------------------------------------------------------------
+'   Function key 5 - Move to next data entry field
+MoveToNext:
+	MoveFieldPointer Ptr%, Fwd%(), Arow%()
+	GOTO MovePointer
+'---------------------------------------------------------------------------
+'   Function key 6 - Move to previous data entry field
+MoveToPrev:
+	MoveFieldPointer Ptr%, Bwd%(), Arow%()
+
+'   The three routines, MoveToNext, MoveToPrev and HomeC, merge here
+
+MovePointer:
+	LOCATE , , 0
+	SELECT CASE Ptr%
+		CASE 2
+		IF Value$(Ptr%) = SPACE$(Alen%(Ptr%)) THEN
+			Temp$ = GetVSelection$(Alen%(Ptr%), "ACTIVITY", Select$())
+			IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+				Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Alen%(Ptr%)), Alen%(Ptr%))
+			END IF
+		END IF
+		CASE 4
+		IF Value$(Ptr%) = SPACE$(Alen%(Ptr%)) THEN
+			Temp$ = GetVSelection$(Alen%(Ptr%), "MFR", Select$())
+			IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+				Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Alen%(Ptr%)), Alen%(Ptr%))
+			END IF
+		END IF
+		CASE 10
+		IF Value$(Ptr%) = SPACE$(Alen%(Ptr%)) THEN
+			Temp$ = GetVSelection$(Alen%(Ptr%), "REGION", Select$())
+			IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+				Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Alen%(Ptr%)), Alen%(Ptr%))
+			END IF
+		END IF
+	END SELECT
+	COLOR Dfg%, Dbg%
+	PutXY Arow%(Ptr%), Acol%(Ptr%), Value$(Ptr%)
+	LOCATE Arow%(Ptr%), Acol%(Ptr%), 1, 0, 7
+	Pointer% = 1
+	RETURN WaitForInput
+'---------------------------------------------------------------------------
+'   Function key 7 - Move cursor forward
+MoveFwd:
+	LOCATE , , 0
+	Pointer% = Pointer% + 1
+	IF Pointer% <= Alen%(Ptr%) THEN
+		LOCATE Arow%(Ptr%), POS(0) + 1, 1, 0, 7
+	ELSE
+		GOTO MoveToNext
+	END IF
+	RETURN WaitForInput
+'---------------------------------------------------------------------------
+'   Function key 8 - Move cursor backward
+MoveBwd:
+	Pointer% = Pointer% - 1
+	LOCATE , , 0
+	IF Pointer% > 0 THEN
+		LOCATE Arow%(Ptr%), POS(0) - 1, 1, 0, 7
+	ELSE
+		MoveFieldPointer Ptr%, Bwd%(), Arow%()
+		LOCATE Arow%(Ptr%), Acol%(Ptr%) + Alen%(Ptr%) - 1, 1, 0, 7
+		Pointer% = Alen%(Ptr%)
+	END IF
+	RETURN WaitForInput
+'---------------------------------------------------------------------------
+'   F9 - Home cursor
+HomeC:
+	LOCATE , , 0
+	Ptr% = 1
+	Pointer% = 1
+	GOTO MovePointer
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+   
+	ELSE
+	   
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+   
+	END IF
+
+	RESUME
+
+'   End of error traps
+'****************************************************************************
+'   End of CTDATA main module
+'****************************************************************************
+
+'****************************************************************************
+'   Data transfer from Knopp CT Test Set.
+'============================================================================
+SUB XferData
+'----------------------------------------------------------------------------
+   
+	SHARED Value$(), Alen%()
+
+Xmenu:
+	CLS
+	COLOR Mfg%, Mbg%
+	LOCATE 1, 20
+	Cputs CHR$(201) + STRING$(58, 205) + CHR$(187), 1
+	FOR x% = 1 TO 4
+		Cputs CHR$(186) + STRING$(58, 32) + CHR$(186), CSRLIN + 1
+	NEXT
+	Cputs CHR$(200) + STRING$(58, 205) + CHR$(188), CSRLIN + 1
+	Cputs Company$, 2
+	Cputs Facility$, 3
+	Cputs "Transformer Record Data Entry System", 4
+	Cputs "Knopp/TRDES Data Transfer", 5
+	PutXY 7, 17, "# Burden  Amps     Ratio     Phase  Accuracy"
+	PRINT TAB(46); "Error   Class"
+	FOR x% = 1 TO 6
+		r% = (x% - 1) * 4 + 30
+		PRINT TAB(17); USING "#.  \ \   \   \    \    \    \    \   \    \"; x%; Value$(x% + 22); Value$(x% + 16); Value$(r%); Value$(r% + 1); Value$(r% + 2)
+	NEXT
+	PRINT
+	PRINT TAB(20); "7. Return to data entry screen"
+	PRINT
+	PRINT
+	PRINT TAB(20); "MFG S/N  "; Value$(3)
+	PRINT TAB(20); "MFG:     "; Value$(4)
+	PRINT TAB(20); "TYPE:    "; Value$(5)
+	PRINT
+	PRINT TAB(13); "Please select 1-6 for line number to transfer data to,"
+	PRINT TAB(13); "or 7 to return to data entry screen.";
+	DO
+		x$ = INPUT$(1)
+		x% = INSTR("1234567", x$)
+	LOOP WHILE x% = 0
+	IF x% = 7 THEN
+		EXIT SUB
+	END IF
+	v% = x% + 16
+	r% = (x% - 1) * 4 + 30
+	Cb% = FREEFILE
+	OPEN "COM1:1200,N,8,1,DS,CS" FOR INPUT AS #Cb% LEN = 500
+	CLS
+	PutXY 10, 16, "Press HOLD/PRINT key when ready to transfer data."
+
+'   Wait for first character
+
+	WHILE LOC(Cb%) = 0 AND x$ <> CHR$(27)
+		PRINT ".";
+	WEND
+   
+'   First character received, wait 10 seconds, then
+'   input what's in buffer
+
+	CLS
+	PutXY 10, 33, "Receiving Data"
+   
+'   Timer routine.  It won't work while passing midnight... Wonder how many
+'   transformers are tested at that hour?
+
+	x = TIMER + 10
+	WHILE TIMER < x
+	WEND
+   
+'   Ok, it's over... Get the data
+
+	a$ = INPUT$(LOC(1), #Cb%)
+
+	CLOSE #Cb%
+   
+	CLS
+	LOCATE 10, 34
+
+'   Milliradians or minutes?
+
+	IF INSTR(a$, "MILLIRAD") > 0 THEN
+		MilliRad% = 1
+	ELSE
+		MilliRad% = 0
+	END IF
+
+'   Ratio correction factor, or error?
+
+	IF INSTR(a$, "CORR") = 0 THEN
+		Factor% = 1
+	ELSE
+		Factor% = 0
+	END IF
+
+'   Get rid of header information we don't need
+
+	a% = INSTR(a$, "(%)")
+	a$ = MID$(a$, a% + 3)
+	a% = INSTR(a$, "(%)")
+	IF a% > 0 THEN a$ = MID$(a$, a% + 3)
+
+
+'   Now move over to data
+
+	WHILE INSTR("0123456789.+-)", LEFT$(a$, 1)) = 0
+		a$ = MID$(a$, 2)
+	WEND
+
+'   Grab ampere reading
+
+	Volt$ = ""
+	WHILE LEFT$(a$, 1) <> " "
+		Volt$ = Volt$ + LEFT$(a$, 1)
+		a$ = MID$(a$, 2)
+	WEND
+
+'   Remove leading spaces
+
+	a$ = LTRIM$(a$)
+
+'   Ratio error or correction factor
+
+	Ratio$ = ""
+	WHILE LEFT$(a$, 1) <> " "
+		Ratio$ = Ratio$ + LEFT$(a$, 1)
+		a$ = MID$(a$, 2)
+	WEND
+
+'   If it's Ratio Error, change it to Ratio
+
+	IF Factor% <> 0 THEN
+		Corr = VAL(Ratio$) / 100
+		Ratio = (Corr + 1) * 100
+	ELSE
+		Ratio = VAL(Ratio$) * 100
+	END IF
+		Ratio$ = STR$((INT(Ratio * 100 + .5)) / 100)
+
+	IF INSTR("0123456789", LEFT$(Ratio$, 1)) = 0 THEN
+		Ratio$ = MID$(Ratio$, 2)
+	END IF
+
+'   More spaces
+
+	a$ = LTRIM$(a$)
+
+'   Now parse the phase error
+
+	Phase$ = ""
+	WHILE LEFT$(a$, 1) <> " "
+		Phase$ = Phase$ + LEFT$(a$, 1)
+		a$ = MID$(a$, 2)
+	WEND
+
+'   Convert milliradians to minutes, if necessary
+
+	IF MilliRad% <> 0 THEN
+		Radian = VAL(Phase$)
+		Phase = Radian * 3.43774678#
+	ELSE
+		Phase = VAL(Phase$)
+	END IF
+		Phase$ = STR$((INT(Phase * 100 + .5)) / 100)
+
+	IF LEFT$(Phase$, 1) = " " THEN
+		MID$(Phase$, 1, 1) = "+"
+	END IF
+ 
+	IF INSTR("+-", LEFT$(Phase$, 1)) = 0 THEN
+		Phase$ = "+" + Phase$
+	END IF
+
+'   More spaces
+
+	a$ = LTRIM$(a$)
+
+'   Accuracy class, or some fantasy thereof
+
+	AccClass$ = ""
+	WHILE LEFT$(a$, 1) <> " " AND LEFT$(a$, 1) <> CHR$(13) AND LEN(a$) > 1
+		AccClass$ = AccClass$ + LEFT$(a$, 1)
+		a$ = MID$(a$, 2)
+	WEND
+
+'   Now put the results where they belong.
+
+	Value$(v%) = LEFT$(Volt$ + SPACE$(Alen%(v%)), Alen%(v%))
+	Value$(r%) = LEFT$(Ratio$ + SPACE$(Alen%(r%)), Alen%(r%))
+	Value$(r% + 1) = LEFT$(Phase$ + SPACE$(Alen%(r% + 1)), Alen%(r% + 1))
+	Value$(r% + 2) = LEFT$(AccClass$ + SPACE$(Alen%(r% + 2)), Alen%(r% + 2))
+
+'   And go back to menu
+
+	GOTO Xmenu
+'****************************************************************************
+END SUB
+

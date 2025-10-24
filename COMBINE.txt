@@ -1,0 +1,259 @@
+'   $title:'COMBINE - Combine and split MRDES/MDS data files'
+'   Ken Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Canton, OH
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   March, 1998
+'       Started
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB OpenInitOutPutFiles ()
+DECLARE SUB ProcessOneInputFile (InFile$)
+DECLARE SUB ProgressReport (Work$, Action%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ProgressReport (Work$, Action%)
+'============================================================================
+'   Define record type(s)
+'----------------------------------------------------------------------------
+TYPE InfoRec
+    Company AS STRING * 2
+    CoName AS STRING * 4
+    Test AS LONG
+    TestHist AS LONG
+    PhyInv AS LONG
+    History AS LONG
+    Transfer AS LONG
+    StatChg AS LONG
+    BattChk AS LONG
+END TYPE
+'============================================================================
+'   Dimension arrays, records
+    DIM SHARED Info(7)  AS InfoRec      '   Company information record
+    DIM IncomingFile$(100)      '   Allow up to 101 incoming files
+'============================================================================
+    DATA    "01","kgpc","02","apco","03","kpco","04","impc","05","mpco"
+    DATA    "06","wpco","07","opco","10","cspc"
+'============================================================================
+'   Check for control file on command line and on the disk
+    ControlFile$ = LTRIM$(RTRIM$(COMMAND$))
+    IF ControlFile$ = "" THEN
+        Cputs "USAGE: COMBINE <control file name>", 10
+        END
+    END IF
+    ON ERROR GOTO NoControlFile
+    ControlFile% = FREEFILE
+    OPEN ControlFile$ FOR INPUT AS #ControlFile%
+    ON ERROR GOTO 0         ' Turn off this error trap
+
+'   If we get here, the file exists. Read it in, and check to see if there's
+'   actually any data in it.  If so, go for it.
+
+    IncomingFile% = -1
+    DO
+        LINE INPUT #ControlFile%, Work$
+        Work$ = LTRIM$(RTRIM$(Work$))
+        IF INSTR(";'*#", LEFT$(Work$, 1)) = 0 THEN
+            IncomingFile% = IncomingFile% + 1
+            IncomingFile$(IncomingFile%) = Work$
+        END IF
+    LOOP UNTIL EOF(ControlFile%)
+    CLOSE #ControlFile%
+    IF ControlFile% = -1 THEN
+        CLS
+        Cputs "No files listed in control file for processing", 10
+        END
+    END IF
+
+'   If we get here, The file exists, and has file names in it.  Now check to
+'   see if the files exist.  If a file is listed and doesn't exist, just skip
+'   further processing on that file and continue with any other files in the
+'   list.  Consider a file to be valid if it exists and has at least one data
+'   line.
+
+    ON ERROR GOTO NoDataFile
+   
+    Pointer% = 0            ' Pointer to the incoming file we're looking at.
+   
+    DO
+        DataFlag% = 0       ' No problems with this file (yet)
+
+        InFile% = FREEFILE
+       
+        OPEN IncomingFile$(Pointer%) FOR INPUT AS #InFile%
+
+        IF DataFlag% = 0 THEN
+           
+            DataFlag% = 1
+
+            DO
+                LINE INPUT #InFile%, Work$
+               
+                    ' Found a data record            
+                   
+                IF INSTR("1234567", LEFT$(Work$, 1)) THEN
+                    DataFlag% = 0
+                END IF
+
+            LOOP UNTIL EOF(InFile%)
+
+        END IF
+       
+        IF DataFlag% = 1 THEN
+            ControlFile% = ControlFile% - 1
+            FOR Counter% = Pointer% TO ControlFile%
+                IncomingFile$(Counter%) = IncomingFile$(Counter% + 1)
+            NEXT
+        END IF
+
+    LOOP UNTIL IncomingFile$ = ""       ' End of data file lists.
+
+
+    ON ERROR GOTO 0                     ' Done with this error trap
+
+
+'   When we get here, the IncomingFile$ array contains a list of valid files
+'   with at least one data record in each file.  Now the fun starts.
+
+    OpenInitOutPutFiles
+
+'   Ok, files are initialized and ready to go.
+
+    Pointer% = 0                        ' Point to the first filename
+   
+    WHILE IncomingFile$(Pointer%) <> ""
+   
+        ProcessOneInputFile IncomingFile$(Pointer%)
+
+    WEND
+
+  
+'   Ok, data's been copied, delete any files with no data records.
+
+    FOR Pointer% = 0 TO 7
+        Total& = Info(Pointer%).Test + Info(Pointer%).TestHist
+        Total& = Total& + Info(Pointer%).PhyInv + Info(Pointer%).History
+        Total& = Total& + Info(Pointer%).Transfer + Info(Pointer%).StatChg
+        Total& = Total& + Info(Pointer%).BattChk
+        IF Total% = 0 THEN
+            KILL Info(Pointer%).CoName + ".txt"
+        END IF
+    NEXT
+
+
+
+    END
+'++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+'   Error traps start here!
+'============================================================================
+'   Control File doesn't exist
+NoControlFile:
+    CLS
+    Cputs "Control file " + ControlFile$ + " not found", 10
+    x$ = Get1Key$(CHR$(13), "Press Enter to exit")
+    END
+'----------------------------------------------------------------------------
+'   Data file doesn't exist
+NoDataFile:
+    DataFlag% = 0
+    CLOSE #DataFile%
+    RESUME NEXT
+'****************************************************************************
+'   End of COMBINE.BAS main module
+'****************************************************************************
+
+'****************************************************************************
+'   Creates output data files, initializes files with header record.  The
+'   output data files are named with the company abbreviation with the string
+'   ".txt" appended.
+'============================================================================
+SUB OpenInitOutPutFiles
+'----------------------------------------------------------------------------
+    Today$ = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+    FOR Count% = 0 TO 7
+        OutFile$ = Info(Count%).CoName + ".txt"
+        Header$ = "H" + Info(Count%).Company + Today$
+        OutFile% = FREEFILE
+        OPEN OutFile$ FOR OUTPUT AS #OutFile%
+        PRINT #OutFile%, Header$
+        CLOSE #OutFile%
+    NEXT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Processes one incoming data file.
+'============================================================================
+SUB ProcessOneInputFile (InFile$)
+'----------------------------------------------------------------------------
+    Co$ = "0102030405060710"
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    DO
+        LINE INPUT #InFile%, Work$
+        IF INSTR("1234567", LEFT$(Work$, 1)) THEN
+            Number% = INSTR(Co$, MID$(Work$, 2, 2)) \ 2
+            OutFile% = FREEFILE
+            OPEN Info(Number%).CoName + ".txt" FOR APPEND AS #OutFile%
+            PRINT #OutFile%, Work$
+            CLOSE #OutFile%
+            ProgressReport Work$, 1
+        END IF
+    LOOP UNTIL EOF(InFile%)
+    CLOSE #InFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Puts progress report on screen.
+'   Action 0 is to init the screen and put the grid in place
+'   Action 1 is to update the grid
+'============================================================================
+SUB ProgressReport (Work$, Action%)
+'----------------------------------------------------------------------------
+    StartLine% = 5
+    TabValue% = 5
+    SELECT CASE Action%
+        CASE 0              ' Initialize screen
+            CLS
+            PutXY StartLine%, TabValue%, "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÂÄÄÄÄÂÄÄÄÄÄÂÄÄÄÄÄÂÄÄÄÄÄÂÄÄÄÄÄÂÄÄÄÄÄÂÄÄÄÄÄÂÄÄÄÄÄ¿"
+            PutXY StartLine% + 1, TabValue%, "³Record Type  ³KGPC ³APCO ³KPCO ³I&M  ³MPCO ³WPCO ³OPCO ³CSP  ³"
+            PutXY StartLine% + 2, TabValue%, "ÃÄÄÄÄÄÄÄÄÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄÅÄÄÄÄÄ´"
+            PutXY StartLine% + 3, TabValue%, "³TEST         ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 4, TabValue%, "³TEST/HISTORY ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 5, TabValue%, "³PHYSICAL INV ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 6, TabValue%, "³HISTORY      ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 7, TabValue%, "³TRANSFER     ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 8, TabValue%, "³STATUS CHG   ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 9, TabValue%, "³BATTERY CHK  ³     ³     ³     ³     ³     ³     ³     ³     ³"
+            PutXY StartLine% + 10, TabValue%, "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÁÄÄÄÄÄÙ"
+
+        CASE 1              ' Update screen
+            RecType% = VAL(LEFT$(Work$, 1))
+            CoCode = INSTR("0102030405060710", MID$(Work$, 2, 2)) \ 2
+            LOCATE StartLine% + RecType% + 3, TabValue% + 15 + CoCode * 6
+            SELECT CASE RecType%
+                CASE 1
+                    PRINT Info(CoCode).Test;
+                CASE 2
+                    PRINT Info(CoCode).TestHist;
+                CASE 3
+                    PRINT Info(CoCode).PhyInv;
+                CASE 4
+                    PRINT Info(CoCode).History;
+                CASE 5
+                    PRINT Info(CoCode).Transfer;
+                CASE 6
+                    PRINT Info(CoCode).StatChg;
+                CASE 7
+                    PRINT Info(CoCode).BattChk;
+            END SELECT
+    END SELECT
+'****************************************************************************
+END SUB
+

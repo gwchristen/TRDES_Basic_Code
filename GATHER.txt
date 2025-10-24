@@ -1,0 +1,665 @@
+'   $title:'GATHER - Gather test board data files to office computer'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   version 1.00
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   October, 1995
+'       Removed productivity information
+'============================================================================
+'   Define record types
+'----------------------------------------------------------------------------
+'   MRDES II information record type
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+        ProcessFlag AS STRING * 1
+        InitDate AS STRING * 10
+        EditDate AS STRING * 10
+        ProcDate AS STRING * 10
+        Signature AS STRING * 20
+    END TYPE
+'----------------------------------------------------------------------------
+'   MRDES II buffer record type
+    TYPE DataBuffer
+        Work AS STRING * 500
+    END TYPE
+'----------------------------------------------------------------------------
+'   TRDES information record type
+    TYPE TrdesInformation
+        NumberOfRecords AS INTEGER
+        Signature AS STRING * 20
+    END TYPE
+'----------------------------------------------------------------------------
+'   TRDES buffer record type
+    TYPE TrdesBuffer
+        Buffer AS STRING * 1000
+    END TYPE
+'----------------------------------------------------------------------------
+'   Record types for ini file
+    TYPE Initfile
+        FileName AS STRING * 15
+        FilePath AS STRING * 63
+        NewName AS STRING * 12
+        LeaveNumber AS INTEGER
+    END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION CheckCombo% (Work$, Location%, Length%, RetLoc%, RetLen%)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DateBack% (OldName$)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB GetMrdesiiFile (Pointer%)
+DECLARE FUNCTION LoadCombo% ()
+DECLARE SUB LoadScrn (FileName$, Location%, Length%, RetLoc%, RetLen%)
+DECLARE FUNCTION NetFlag$ (FlagNumber%, Funct%, ReqValue$, NewValue$, Drive$)
+DECLARE SUB WorkProd (Buffer$)
+'============================================================================
+'   Dimension arrays, record types, etc.
+'----------------------------------------------------------------------------
+    DIM SHARED Ini(50) AS Initfile, LocalPath$, Combo$(50), Combo%
+    DIM SrcInfo AS InfoRecord, TempInfo AS InfoRecord
+    DIM DestInfo AS InfoRecord, DataRec AS DataBuffer
+    DIM TestLoc%(2), TestLen%(2), RetLoc%(2), RetLen%(2)
+'============================================================================
+'   Use of the .ini file allows changes as needed.
+'============================================================================
+'   Just checking version number
+'----------------------------------------------------------------------------
+    IF UCASE$(LEFT$(LTRIM$(COMMAND$), 1)) = "V" THEN
+        PRINT "Gather Test Data from Test Boards - version 1.00"
+        END
+    END IF
+    Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   Activate error trap
+'----------------------------------------------------------------------------
+    ON ERROR GOTO NetProblem
+'============================================================================
+'   Set total number of machines to be processed
+
+    Machines% = 0
+   
+'   Read the ini file.
+
+    IniFile% = FREEFILE
+    OPEN "gather.ini" FOR INPUT AS #IniFile%
+    CLS
+    PRINT TAB(10); "Reading ini file"
+    PRINT
+ 
+'   This .ini file processing allows basically a free form .ini file with
+'   comments as necessary to make it understandable.
+
+    DO
+        LINE INPUT #IniFile%, Work$
+        IF INSTR(";#", LEFT$(Work$, 1)) = 0 AND LTRIM$(RTRIM$(Work$)) <> "" THEN
+            Machines% = Machines% + 1
+            Ini(Machines%).FileName = Work$
+            DO
+                LINE INPUT #IniFile%, Work$
+            LOOP WHILE LTRIM$(RTRIM$(Work$)) = "" OR LEFT$(LTRIM$(Work$), 1) = ";"
+            Ini(Machines%).FilePath = Work$
+            DO
+                LINE INPUT #IniFile%, Work$
+            LOOP WHILE LTRIM$(RTRIM$(Work$)) = "" OR LEFT$(LTRIM$(Work$), 1) = ";"
+            Ini(Machines%).LeaveNumber = VAL(Work$)
+        END IF
+    LOOP UNTIL EOF(IniFile%) OR LEFT$(Work$, 1) = "#"
+
+    CLOSE
+
+'   Done reading the ini file.  Pick up a bit of information from the local
+'   DATAFILE, like where the information is in the records to decide which
+'   records are complete/incomplete, and where the local files are located.
+
+    PRINT
+    PRINT TAB(10); "Getting local file path information"
+    DataFile% = FREEFILE
+    OPEN "DATAFILE" FOR INPUT AS #DataFile%
+    FOR C% = 1 TO 3
+        LINE INPUT #DataFile%, ScreenPath$
+    NEXT
+   
+'   Skip one line in file
+
+    LINE INPUT #DataFile%, LocalPath$
+    LINE INPUT #DataFile%, LocalPath$
+
+'   Get screen/record definition filenames.  For/Next loop skips file paths.
+
+    FOR x% = 1 TO 3
+        LINE INPUT #DataFile%, Test$
+    NEXT
+    LINE INPUT #DataFile%, TestHist$
+   
+'   Need a bit of information from test and test/history screen/record definition files
+   
+    CLOSE
+
+    LoadScrn ScreenPath$ + Test$, TestLoc%(1), TestLen%(1), RetLoc%(1), RetLen%(1)
+    LoadScrn ScreenPath$ + TestHist$, TestLoc%(2), TestLen%(2), RetLoc%(2), RetLen%(2)
+
+'   We now have all the information needed to do the job.  Go!
+
+    PRINT
+   
+'   This loop copies data from the remote work station to the local work
+'   station.
+
+    FOR Count% = 1 TO Machines%
+        PRINT TAB(15); "Processing " + LTRIM$(RTRIM$(Ini(Count%).FilePath)) + LTRIM$(RTRIM$(Ini(Count%).FileName)); "  ";
+        GetMrdesiiFile Count%
+       
+SkipThisOne:
+   
+    NEXT
+
+    CLOSE
+
+'   Ok, copy's done.  Now split off the incomplete demand records to send to
+'   the demand computer.
+
+    Combo% = LoadCombo%
+    ComboFlag% = 1
+
+    PRINT
+    PRINT TAB(10); "Now processing combo information"
+
+'   After reading the combination code file, if there are no records in the
+'   combo file, just drop the matter and leave the data on the local
+'   (probably office) work station.  The data's not where we want it, but at
+'   least it's safely on the office work station where we can deal with it
+'   manually.
+
+    IF Count% = 0 THEN
+        PRINT
+        PRINT TAB(15); "Combo file not found?"
+        PRINT Get1Key$(CHR$(13), "Press Enter to exit")
+        END
+    END IF
+
+'   Combo file information loaded.  Now do the deed
+
+'   Check and lock the remote file.  If the remote file is marked as locked,
+'   report problem, and exit.
+
+    IF MID$(LTRIM$(LocalPath$), 2, 1) = ":" THEN
+        Drive$ = LEFT$(LTRIM$(LocalPath$), 1)
+    ELSE
+        Drive$ = ""
+    END IF
+
+    Result$ = NetFlag$(2, 2, "0", "2", Drive$)
+
+    Src% = FREEFILE
+    OPEN LocalPath$ + "Mrdes.Dat" FOR RANDOM AS #Src% LEN = LEN(DataRec)
+    GET #Src%, 1, SrcInfo
+
+'   Destination file is the remote drive where the combos go.  This is the
+'   first remote work station referred to in the .ini file.
+
+    Drive$ = LEFT$(LTRIM$(Ini(1).FilePath), 1)
+
+    Result$ = NetFlag$(2, 2, "0", "2", Drive$)
+
+    Dest% = FREEFILE
+    OPEN LTRIM$(RTRIM$(Ini(1).FilePath)) + LTRIM$(RTRIM$(Ini(1).FileName)) FOR RANDOM AS #Dest% LEN = LEN(DataRec)
+    GET #Dest%, 1, DestInfo
+   
+'   If the destination file doesn't exist, create it and put the local work
+'   station's signature on it.
+
+    IF DestInfo.NumberOfRecords = 0 THEN
+        DestInfo.InitDate = DATE$
+        DestInfo.EditDate = ""
+        Sig$ = LTRIM$(RTRIM$(ENVIRON$("MACHINE")))
+        IF Sig$ = "" THEN
+            Sig$ = "MRDES II"
+        END IF
+        DestInfo.Signature = Sig$
+    ELSE
+        DestInfo.EditDate = DATE$
+    END IF
+    DestInfo.ProcDate = ""
+
+'   The temporary file is the local data file where the complete records go.
+'   This is the data file that will be processed by INTRFACE to make the MDS
+'   file.
+
+    Temp% = FREEFILE
+    OPEN LocalPath$ + "Mrdes.Tmp" FOR RANDOM AS #Temp% LEN = LEN(DataRec)
+    GET #Temp%, 1, TempInfo
+
+    IF TempInfo.NumberOfRecords = 0 THEN
+        TempInfo.InitDate = DATE$
+        TempInfo.EditDate = ""
+        Sig$ = LTRIM$(RTRIM$(ENVIRON$("MACHINE")))
+        IF Sig$ = "" THEN
+            Sig$ = "MRDES II"
+        END IF
+        TempInfo.Signature = Sig$
+    ELSE
+        TempInfo.EditDate = DATE$
+    END IF
+    TempInfo.ProcDate = ""
+
+'   This is the loop that handles the incomplete combo records.  It really
+'   looks more complicated than it is, with the appearance of complication
+'   caused by the need to keep flexibility without the need to recompile for
+'   every little change.
+
+    FOR Count% = 1 TO SrcInfo.NumberOfRecords
+        GET #Src%, Count% + 1, DataRec
+        Work$ = DataRec.Work
+       
+        Sel% = VAL(LEFT$(Work$, 1))
+
+        IF Sel% < 3 THEN
+            Flag% = CheckCombo%(Work$, TestLoc%(Sel%), TestLen%(Sel%), RetLoc%(Sel%), RetLen%(Sel%))
+            IF Flag% = 0 THEN
+                DestInfo.NumberOfRecords = DestInfo.NumberOfRecords + 1
+                PUT #Dest%, DestInfo.NumberOfRecords + 1, DataRec
+            ELSE
+                TempInfo.NumberOfRecords = TempInfo.NumberOfRecords + 1
+                PUT #Temp%, TempInfo.NumberOfRecords + 1, DataRec
+            END IF
+        ELSE
+            TempInfo.NumberOfRecords = TempInfo.NumberOfRecords + 1
+            PUT #Temp%, TempInfo.NumberOfRecords + 1, DataRec
+        END IF
+    NEXT
+   
+'   Set process flag in source file so we don't process this data again.
+
+    SrcInfo.ProcessFlag = "P"
+    SrcInfo.ProcDate = DATE$
+    PUT #Src%, 1, SrcInfo
+
+'   Close the source file.
+
+    CLOSE #Src%
+   
+'   Update the destination and temporary file information records
+
+    PUT #Dest%, 1, DestInfo
+    PUT #Temp%, 1, TempInfo
+   
+'   Close the files
+
+    CLOSE #Dest%
+    CLOSE #Temp%
+
+'   Have a local backup, just in case.
+
+    Flag% = DateBack(LocalPath$ + "MRDES.DAT")
+
+'   Now the temp file becomes the new datafile
+
+    NAME LocalPath$ + "MRDES.TMP" AS LocalPath$ + "MRDES.DAT"
+
+'   Job done.  Release the locks
+
+    IF MID$(LTRIM$(LocalPath$), 2, 1) = ":" THEN
+        Drive$ = LEFT$(LTRIM$(LocalPath$), 1)
+    ELSE
+        Drive$ = ""
+    END IF
+
+    Flag% = 0
+   
+    Result$ = NetFlag$(2, 2, "2", "0", Drive$)
+
+    IF LEN(Result$) <> 1 THEN
+        PRINT "Local file lock release failed!"
+        Flag% = 1
+    END IF
+
+    Drive$ = LEFT$(LTRIM$(Ini(1).FilePath), 1)
+
+    Result$ = NetFlag$(2, 2, "2", "0", Drive$)
+
+    IF LEN(Result$) <> 1 THEN
+        PRINT "Remote file lock release failed!"
+        Flag% = 1
+    END IF
+
+    Cputs "Done!!!!", CSRLIN + 3
+   
+    x$ = " "
+    x& = TIMER + 10
+   
+    WHILE TIMER < x& AND x$ <> CHR$(13)
+        x$ = INKEY$
+    WEND
+
+'   Done!!!!!!!!!!!!!!!!
+
+'============================================================================
+'   This line's here to protect the error traps
+Split:
+    END
+'============================================================================
+'   Beginning of error traps
+'----------------------------------------------------------------------------
+'   Network Problems.  Basically, what this system does in repsonse to a
+'   network, or any error, for that matter, error is wait 10 seconds, then
+'   retry the failing request.  This system isn't perfect, but works well
+'   enough I may not change it for full network compliance.  Pressing the
+'   escape key will return to the main menu.
+
+NetProblem:
+    IF ComboFlag% = 1 THEN
+        x& = TIMER + 10
+        DO
+            Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+        IF Junk$ = CHR$(27) THEN
+            RESUME Split
+        ELSE
+            RESUME
+        END IF
+    END IF
+    SELECT CASE ERR
+        CASE 76
+            RESUME SkipThisOne
+        CASE ELSE
+            x& = TIMER + 10
+            DO
+                Junk$ = INKEY$
+            LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+            IF Junk$ = CHR$(27) THEN
+                RESUME Split
+            ELSE
+                RESUME
+            END IF
+    END SELECT
+'   End of error traps
+'****************************************************************************
+'   End of GATHER.BAS main module
+'****************************************************************************
+
+'****************************************************************************
+'   Checks to see if code is on list, and if so, is record incomplete.
+'   Returns 0 for incomplete record on list, 1 for anything else
+'============================================================================
+FUNCTION CheckCombo% (Work$, Location%, Length%, RetLoc%, RetLen%)
+'----------------------------------------------------------------------------
+'   One of the VERY few constants around here is that codes are 5 characters
+'   and start in the second character position in the record.  This situation,
+'   of course, will have to change.  The information from the combo code list
+'   does not need to have only complete codes.  If there are fewer than 5
+'   characters in the file entry, only those characters are checked, and any
+'   codes matching them will be tested.
+
+    Code$ = MID$(Work$, 2, 5)
+
+'   First check to see if the code's one of ours.
+
+    Flag% = 1
+    FOR x% = 1 TO Combo%
+        IF LEFT$(Code$, LEN(Combo$(x%))) = Combo$(x%) THEN
+            Flag% = 0
+        END IF
+    NEXT
+
+'   Not on list.  Record complete.
+
+    IF Flag% = 1 THEN
+        CheckCombo% = 1
+        EXIT FUNCTION
+    END IF
+
+'   If it is, and the demand accuracy as found is blank, it goes to the
+'   demand work station.
+
+    IF LTRIM$(RTRIM$(MID$(Work$, Location%, Length%))) <> "" THEN
+            Flag% = 1
+    END IF
+
+    CheckCombo% = Flag%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Gets MRDES II File via net
+'============================================================================
+SUB GetMrdesiiFile (Pointer%)
+'----------------------------------------------------------------------------
+   
+    DIM SrcInfo AS InfoRecord, DestInfo AS InfoRecord, DataRec AS DataBuffer
+   
+'   Check and lock the remote file.  If the remote file is marked as locked,
+'   report problem, and exit.
+
+    Drive$ = LEFT$(LTRIM$(Ini(Pointer%).FilePath), 1)
+
+'   Network check functions
+
+    Result$ = NetFlag$(2, 2, "0", "2", Drive$)
+
+    IF LEN(Result$) <> 1 THEN
+        PRINT LTRIM$(RTRIM$(Ini(Pointer%).FilePath)); " file in use.  Not processed"
+        EXIT SUB
+    END IF
+
+'   Check the remote data file to see if it has records.  If it does, and
+'   we're supposed to leave one or more records, check to see if it has more
+'   than the number of records than we're supposed to leave.  If it does not,
+'   exit the procedure.
+
+    Src% = FREEFILE
+    OPEN LTRIM$(RTRIM$(Ini(Pointer%).FilePath)) + LTRIM$(RTRIM$(Ini(Pointer%).FileName)) FOR RANDOM AS #Src% LEN = LEN(DataRec)
+    GET #Src%, 1, SrcInfo
+    CLOSE #Src%
+    IF SrcInfo.NumberOfRecords <= Ini(Pointer%).LeaveNumber THEN
+        IF SrcInfo.NumberOfRecords = 0 THEN
+            PRINT "No records"
+        ELSE
+            PRINT "Less than or equal to"; Ini(Pointer%).LeaveNumber
+        END IF
+
+'   Unlock remote file(s)
+
+        Result$ = NetFlag$(2, 2, "2", "0", Drive$)
+  
+        IF LEN(LTRIM$(RTRIM$(Result$))) <> 1 THEN
+            PRINT Ini(Pointer%).FilePath; " file release failed"
+        END IF
+       
+        EXIT SUB
+    END IF
+
+'   If we get here, there's records in the remote file that need to be
+'   transfered to the local data file.  Report the number of records in the
+'   file.
+
+    PRINT SrcInfo.NumberOfRecords; " records."
+
+'   Now do the processing.  Start with claiming the datafile by renaming it.
+
+    NewName$ = LTRIM$(RTRIM$(Ini(Pointer%).FilePath)) + LTRIM$(RTRIM$(Ini(Pointer%).FileName))
+    Success% = DateBack%(NewName$)
+
+'   Trouble in paradise.  Leave a note on the screen, and exit.
+
+    IF Success% > 0 THEN
+        PRINT "Trouble with this file"
+        EXIT SUB
+    END IF
+
+'   The file is now ours, so save its DOS name.
+
+    Ini(Pointer%).NewName = NewName$
+
+'   If we're supposed to leave a record, move the record from our remote
+'   holding file to the remote data file.  The record is actually copied from
+'   the holding file to the remote data file and is only effectively removed
+'   from the holding file.  This will leave the holding file, which bocomes
+'   the remote backup file, 500 characters larger than it actually needs to
+'   be, if anyone actually cares.
+
+    IF Ini(Pointer%).LeaveNumber > 0 THEN
+   
+        Src% = FREEFILE
+
+        OPEN LTRIM$(RTRIM$(Ini(Pointer%).FilePath)) + LTRIM$(RTRIM$(Ini(Pointer%).NewName)) FOR RANDOM AS #Src% LEN = LEN(DataRec)
+
+        Dest% = FREEFILE
+
+        OPEN LTRIM$(RTRIM$(Ini(Pointer%).FilePath)) + LTRIM$(RTRIM$(Ini(Pointer%).FileName)) FOR RANDOM AS #Dest% LEN = LEN(DataRec)
+
+        GET #Src%, 1, SrcInfo
+
+        DestInfo = SrcInfo
+        DestInfo.NumberOfRecords = Ini(Pointer%).LeaveNumber
+        DestInfo.InitDate = DATE$
+        DestInfo.EditDate = ""
+        PUT #Dest%, 1, DestInfo
+    
+        FOR Ctr% = 1 TO Ini(Pointer%).LeaveNumber
+            GET #Src%, SrcInfo.NumberOfRecords - Ini(Pointer%).LeaveNumber + Ctr% + 1, DataRec
+            PUT #Dest%, Ctr% + 1, DataRec
+        NEXT
+
+'   Done with remote data file.  Give it back.
+
+        CLOSE #Dest%
+   
+'   Decrement source info number of records. This and the above effectively
+'   remove the last record and leave it at the remote machine.
+
+        SrcInfo.NumberOfRecords = SrcInfo.NumberOfRecords - Ini(Pointer%).LeaveNumber
+        SrcInfo.ProcDate = DATE$
+        PUT #Src%, 1, SrcInfo
+
+'   This close assures that all data is flushed to the file.
+
+        CLOSE #Src%
+
+    END IF
+
+    Src% = FREEFILE
+    OPEN LTRIM$(RTRIM$(Ini(Pointer%).FilePath)) + LTRIM$(RTRIM$(Ini(Pointer%).NewName)) FOR RANDOM AS #Src% LEN = LEN(DataRec)
+
+    Dest% = FREEFILE
+    OPEN LTRIM$(RTRIM$(LocalPath$)) + LTRIM$(RTRIM$(Ini(Pointer%).FileName)) FOR RANDOM AS #Dest% LEN = LEN(DataRec)
+
+    GET #Src%, 1, SrcInfo
+    GET #Dest%, 1, DestInfo
+
+'   Now copy the data
+
+    FOR x% = 1 TO SrcInfo.NumberOfRecords
+        GET #Src%, x% + 1, DataRec
+        DestInfo.NumberOfRecords = DestInfo.NumberOfRecords + 1
+        PUT #Dest%, DestInfo.NumberOfRecords + 1, DataRec
+    NEXT
+
+'   Done with source file.  This time we're really done.
+
+    CLOSE #Src%
+
+'   Done also with the destination file, for the time being.
+
+    PUT #Dest%, 1, DestInfo
+   
+    CLOSE #Dest%
+
+'   Unlock remote file(s)
+
+    Result$ = NetFlag$(2, 2, "2", "0", Drive$)
+   
+    IF LEN(LTRIM$(RTRIM$(Result$))) <> 1 THEN
+        PRINT Ini(Pointer%).FilePath; " file release failed"
+    END IF
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Loads combination meter identifying file.
+'   Returns number of combo codes found.
+'============================================================================
+FUNCTION LoadCombo%
+'----------------------------------------------------------------------------
+    Count% = 0
+    ComboFile% = FREEFILE
+    OPEN "combo" FOR INPUT AS #ComboFile%
+
+'   This loop reads the combo code data file into the array, allowing a
+'   relatively free form data file and partial code entries.
+
+    DO
+        LINE INPUT #ComboFile%, Work$
+        Work$ = LTRIM$(RTRIM$(Work$))
+      
+'   If the line's one of ours, increment the counter and add the line to the
+'   array.
+
+        IF Work$ <> "" AND LEFT$(Work$, 1) <> ";" AND LEFT$(Work$, 1) <> "#" THEN
+            Count% = Count% + 1
+            Combo$(Count%) = Work$
+        END IF
+    LOOP UNTIL EOF(ComboFile%) OR LEFT$(Work$, 1) = "#"
+    CLOSE
+   
+    LoadCombo% = Count%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Load the screen arrays.  This subroutine opens the selected screen file,
+'   then reads in all information necessary to process that screen.  This
+'   procedure is copied and slightly modified from MRDES.EXE.  It does
+'   generate some temporary arrays, but also will correctly load screen files
+'   even if they change.
+'============================================================================
+SUB LoadScrn (FileName$, Location%, Length%, RetLoc%, RetLen%)
+'----------------------------------------------------------------------------
+
+    x% = 100
+    DIM Vlen%(x%), RecPos%(x%)
+
+    PRINT TAB(10); "Getting information from "; FileName$
+    ScnPth% = FREEFILE
+    OPEN FileName$ + ".SCN" FOR INPUT AS #ScnPth%
+
+'   Number of screen prompts and screen title
+
+    INPUT #ScnPth%, Prompt%, Title$
+
+'   Get the prompt information
+
+    FOR x% = 1 TO Prompt%
+        INPUT #ScnPth%, Pline%, Pcol%, Prompt$
+    NEXT
+
+'   Number of data fields
+
+    INPUT #ScnPth%, Value%
+
+'   Screen information for data fields.
+
+    FOR x% = 1 TO Value%
+        INPUT #ScnPth%, Vline%, Vcol%, Vlen%(x%), Fwd%, Bwd%, Help$
+        INPUT #ScnPth%, RecPos%(x%), Rinit%, NonSpc%, Default$, Align$
+        INPUT #ScnPth%, Junk$, Mds$, MdsLoc%, MdsLen%
+    NEXT
+
+'   Series full load as found field pointer.
+
+    INPUT #ScnPth%, Sfl%
+ 
+    CLOSE #ScnPth%
+
+    Location% = RecPos%(Sfl% + 26)
+    Length% = Vlen%(Sfl% + 26)
+    RetLoc% = RecPos%(Sfl% + 45)
+    RetLen% = Vlen%(Sfl% + 45)
+
+'****************************************************************************
+END SUB
+

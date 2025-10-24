@@ -1,0 +1,2939 @@
+'   $title:'MRDES II - Meter Record Data Entry/Edit Program'
+'   Version 8.31
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History:
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Minor update to source code, mostly comments
+'============================================================================
+'   Make arrays dynamic so they can be redimensioned
+'   $DYNAMIC
+'============================================================================
+'   Record type definitions
+'----------------------------------------------------------------------------
+'   Define the type needed for INTERRUPT
+'   This one does not handle the segment registers.
+	TYPE RegType
+		Ax    AS INTEGER
+		Bx    AS INTEGER
+		Cx    AS INTEGER
+		Dx    AS INTEGER
+		Bp    AS INTEGER
+		Si    AS INTEGER
+		Di    AS INTEGER
+		Flags AS INTEGER
+	END TYPE
+'----------------------------------------------------------------------------
+'   The information record type is used in the first record of the data file
+'   to track number of records, processed/unprocessed file and initialization,
+'   edit and process dates.  The GSL has reserved the first 250 characters of
+'   the 500 available for its own uses.  The remaining 250 are available for
+'   use by anyone needing them and willing to write the code to access them.
+	TYPE InfoRecord
+		NumberOfRecords AS INTEGER
+		ProcessFlag AS STRING * 1
+		InitDate AS STRING * 10
+		EditDate AS STRING * 10
+		ProcDate AS STRING * 10
+		Signature AS STRING * 20
+	END TYPE
+'----------------------------------------------------------------------------
+'   Define buffer record type.  This one's just a 500 character block.
+'   How to use it is defined outside the record type.
+	TYPE DataBuffer
+		Work AS STRING * 500
+	END TYPE
+'----------------------------------------------------------------------------
+'   Repair data record type
+'   This looks at the repair list record as it is received from Enable
+	TYPE RepairData
+		Serial AS STRING * 9        ' Device serial number
+		Code AS STRING * 5          ' Device code
+		Area AS STRING * 1          ' Actually, it's company code
+		Mfr AS STRING * 2           ' Manufacturer code
+		Ac AS STRING * 2            ' Activity code
+	END TYPE
+'----------------------------------------------------------------------------
+'   Define purchase code lookup record type
+'   This looks at the purchase code table as it is received from Enable
+	TYPE LookUpCode
+		Mfr AS STRING * 2
+		Code AS STRING * 5
+		Ambg AS STRING * 1
+		Type1 AS STRING * 12
+		Choice1 AS STRING * 5
+		Type2 AS STRING * 12
+		Choice2 AS STRING * 5
+		Type3 AS STRING * 12
+		Choice3 AS STRING * 5
+	END TYPE
+'============================================================================
+'   Declare Procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION AllCheck% (x$, Check$)
+DECLARE FUNCTION CheckDivision% (V$)
+DECLARE FUNCTION CheckChars% (Value$, Cf%)
+DECLARE FUNCTION CheckFile% (DataPath$)
+DECLARE FUNCTION CheckLimits% (Value$, Limit!)
+DECLARE SUB CheckPath (Path$)
+DECLARE SUB CheckRepairList (Align$(), Cfg%(), Sel%, Value$())
+DECLARE FUNCTION CheckSerial% (Serial$, Align$, ProcName$(), ProcName%)
+DECLARE SUB CheckTheData (Area1%, Area2%, ChkPath$, DataPath$, DateLoc%, EditRec%, Flag%, Ptr%, Sel%, Sfl%, Value%, Value$())
+DECLARE FUNCTION ChkBalance% (left%, Limit!, Eflag%(), Estring$(), Sfl%, Value$())
+DECLARE SUB ChkRepairList ()
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION DayOfWeek$ (Today$)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, LengTh%)
+DECLARE SUB DumpEntry (Ptr%)
+DECLARE SUB ErrorString (FgClr%, BgClr%, RfgClr%, RbgClr%, Eflag%, Estring$)
+DECLARE SUB FieldEntry ()
+DECLARE SUB Funckeys (Cfg0%, Cfg1%, Cfg2%, Cfg3%, Cfg5%, Sel%, Sfl%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION GetChoice% ()
+DECLARE SUB GetEnvInfo (Office%, Bfg%, Bbg%, Cfg%(), CsrTop%, CsrBot%)
+DECLARE FUNCTION GetPurcCode$ ()
+DECLARE FUNCTION GetVSelection$ (LengTh%, FileName$, Select$())
+DECLARE SUB Grab5455Acc (Work$, Look$, Ptrf%, Ptrl%)
+DECLARE FUNCTION Grab5800Acc$ (Source$, Dec%, Tlen%)
+DECLARE SUB HelpFile (FileName$, EndPrompt$)
+DECLARE SUB InitFile ()
+DECLARE SUB InitStrings (DateLoc%, Default$(), Rinit%(), Value$(), Value%, Vlen%())
+DECLARE SUB INTERRUPT (IntNum AS INTEGER, InReg AS RegType, OutReg AS RegType)
+DECLARE FUNCTION Julian& ()
+DECLARE FUNCTION LeftAsFound% (Eflag%(), Estring$(), OffSet%, Value$(), Vlen%())
+DECLARE SUB LoadScrn ()
+DECLARE SUB LoadWrite ()
+DECLARE FUNCTION LookUpArea$ (q$)
+DECLARE FUNCTION Mayan$ ()
+DECLARE SUB MfrLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE SUB MoveFieldPointer (Ptr%, Work%(), Vline%())
+DECLARE FUNCTION NetFlag$ (FlagNumber%, Funct%, ReqValue$, NewValue$, Drive$)
+DECLARE FUNCTION OneDec% (Look$)
+DECLARE SUB ParseData (Fields%, Value$(), Buffer$, Position%(), LengTh%(), TimeStamp$)
+DECLARE SUB ParseIndex ()
+DECLARE SUB PrintDiag ()
+DECLARE SUB PrintHeading (ToPrt%)
+DECLARE SUB PrintIndex (Index$, ToPrt%)
+DECLARE FUNCTION PrintMenu$ ()
+DECLARE SUB PrintScreen ()
+DECLARE FUNCTION ProcRFLAcc$ (Work$, x%)
+DECLARE FUNCTION Purchase$ (Target$, Vlen%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadDataFile ()
+DECLARE SUB ReInit ()
+DECLARE SUB RestoreDefault (Value$, Default$, Ptr%, Vlen%)
+DECLARE SUB RestoreScreen (Cfg%(), DataLoc%, Eflag%(), Estring$(), Ptr%, Sel%, Sfl%, Vcol%(), Vline%())
+DECLARE FUNCTION Round$ (Incoming$, LengTh%, Places%)
+DECLARE SUB ToggleRepairList (RepList%)
+'============================================================================
+'   Time stamp flag and data storage
+'   TimeStamp%=0 for do not use function
+'             =1 for set record time stamp to computer time entry/edit
+'             =2 set record time stamp to computer time entry only
+'                maintain existing time stamp when editing record
+'----------------------------------------------------------------------------
+'   These common statements allow arrays to be accessed from all modules that
+'   make up the program and have the common statements to allow access.
+	COMMON Align$(), Bwd%(), Cfg%(), Default$(), Divs$(), Eflag%()
+	COMMON Estring$(), Fwd%(), Help$(), NonSpc%(), Pcol%(), Pline%()
+	COMMON Prompt$(), RecPos%(), Rinit%(), Scn$(), Value$(), Vcol%()
+	COMMON Vlen%(), Vline%(), Select$()
+	COMMON SHARED CsrTop%, CsrBot%, Mds2%, TimeStamp$, TimeStamp%, Version$
+	COMMON Header$, Lab$
+'============================================================================
+'   Dimension arrays
+'----------------------------------------------------------------------------
+	Items% = 100
+	DIM Align$(Items%), Bwd%(Items%), Cfg%(10), Default$(Items%)
+	DIM Divs$(25, 1), Eflag%(Items%), Estring$(Items%), Fwd%(Items%)
+	DIM Help$(Items%), NonSpc%(Items%), Pcol%(Items%), Pline%(Items%)
+	DIM Prompt$(Items%), RecPos%(Items%), Rinit%(Items%), Scn$(20)
+	DIM Value$(Items%), Vcol%(Items%), Vlen%(Items%), Vline%(Items%)
+	DIM Select$(100)
+'============================================================================
+	Programmer$ = "K.W.Kroninger"
+'   These are not actually arrays, they're record types, but are declared
+'   the same way.  These two are needed for DOS function access.
+
+	DIM SHARED InRegs AS RegType, OutRegs AS RegType
+
+'   File access record types
+
+	DIM SHARED Info AS InfoRecord, DataRec AS DataBuffer, Lookup AS LookUpCode
+	DIM SHARED Net%
+'============================================================================
+'   Version number
+'----------------------------------------------------------------------------
+	Version$ = "Version 8.30"
+'============================================================================
+'   Cursor size
+'----------------------------------------------------------------------------
+	CsrTop% = 0                 ' First character line
+	CsrBot% = 7                 ' Last character line
+'============================================================================
+'   Just checking for version number
+'----------------------------------------------------------------------------
+	IF UCASE$(LTRIM$(RTRIM$(COMMAND$))) = "V" THEN
+		PRINT "MRDES II - Meter Record Data Entry/Edit System - "; Version$
+		END
+	END IF
+'============================================================================
+'   Check for configuration file and read if found.  The configuration file
+'   sets most of the screen colors, enables/disables the printer, and allows
+'   selection of the data transfer system, if any.  If the configuration
+'   file is not found, the the configuration utility is run automatically.
+'----------------------------------------------------------------------------
+'   Set an error trap to handle situation if config file is missing
+
+	ON ERROR GOTO BadConfig
+
+'   Read the file.  All we really need is the first two characters of the
+'   first seven lines.  These must be numbers acceptable to MRDES II and the
+'   hardware.
+
+	Df% = FREEFILE
+	OPEN "MRDES.CFG" FOR INPUT AS #Df%
+	FOR Counter% = 0 TO 6
+		LINE INPUT #Df%, Work$
+		Cfg%(Counter%) = VAL(LEFT$(Work$, 2))
+	NEXT
+	CLOSE
+
+'   Clear this error trap so it doesn't try to help later on.
+
+	ON ERROR GOTO 0
+'============================================================================
+'   Error trap for path data file.  The path data file information is
+'   absolutely necessary for MRDES II operation as this is the only way it
+'   can find its screen setup, error check, help and data files.
+'----------------------------------------------------------------------------
+
+	ON ERROR GOTO WhereFile
+
+	ReadDataFile
+
+'   Clear the latest error trap
+
+	ON ERROR GOTO 0
+'----------------------------------------------------------------------------
+'   Check repair lists?  If repair list isn't there, or has the word NO as the
+'   first two characters, clear the flag so we don't attempt to check data
+'   against the list in operation.
+
+	ON ERROR GOTO NoRepLst
+
+	ChkRepairList
+
+WeChecked:
+
+'   Clear the latest error trap
+
+	ON ERROR GOTO 0
+
+'============================================================================
+'   Is this the office work station?  Non-test options are not needed at test
+'   board work stations.  If the work station is not correctly defined as the
+'   office work station, these options are not presented or allowed.
+'   Any MRDES II work station can be configured quickly and easily as the
+'   office work station if necessary by anyone with reasonable knowledge of
+'   DOS, but it is not a part of the configuration file or utility.
+'----------------------------------------------------------------------------
+'   Default bold colors to normal colors and work station to test board.
+   
+	Bfg% = Cfg%(0)
+	Bbg% = Cfg%(1)
+	Office% = 0
+   
+'   Now check overrides
+
+	GetEnvInfo Office%, Bfg%, Bbg%, Cfg%(), CsrTop%, CsrBot%
+
+'============================================================================
+'   Set automatic data transfer default.
+'----------------------------------------------------------------------------
+	IF Cfg%(5) > 0 THEN
+		Work$ = ENVIRON$("AUTOTRAN")
+		IF Work$ <> "" THEN
+			IF UCASE$(LTRIM$(RTRIM$(Work$))) = "YES" THEN
+				AutoTran% = 1
+			END IF
+		END IF
+	END IF
+  
+'   Get machine signature, if its use is desired.
+
+	Signature$ = LTRIM$(RTRIM$(ENVIRON$("MACHINE")))
+	IF Signature$ = "" THEN
+		Signature$ = "MRDES II"
+	END IF
+'============================================================================
+'   For the office work station, default to working with the incoming file.
+'   Hold% is used as a boolean variable to indicate which file is being
+'   processed.
+'----------------------------------------------------------------------------
+'   Check for network problem
+
+	ON ERROR GOTO NetProblem
+   
+	Hold% = 0
+
+'   Check the file.  If it's available, lock it for ourselves.
+'   If not, inform the operator, and wait.
+
+ChekFile:
+
+	IF Net% = 1 THEN
+		Drive$ = UCASE$(LEFT$(LTRIM$(DataPath$), 1))
+   
+		IF Drive$ < "A" OR Drive$ > "Z" THEN
+			Drive$ = ""
+		END IF
+
+		Result$ = NetFlag$(1, 2, "0", "1", Drive$)
+  
+	END IF
+
+	IF LEN(Result$) <> 1 THEN
+		CLS
+		Cputs "Data file in use by another machine", 6
+		Cputs "Press R to retry, or E to exit", 12
+		x$ = Get1Key$("ER" + CHR$(13) + CHR$(27), "(Enter = E, Esc = R)")
+		IF x$ = "E" OR x$ = CHR$(27) THEN
+			END
+		ELSE
+			GOTO ChekFile
+		END IF
+	END IF
+   
+Menu:
+
+	EditRec% = 0             ' Clear the edit flag, in case it's set
+   
+	Sel$ = PrintMenu$        ' Present the main menu
+
+	IF Sel$ = "=" THEN
+		PrintDiag
+		GOTO Menu
+	END IF
+
+	IF Sel$ = CHR$(27) THEN
+		Sel$ = "X"
+	END IF
+   
+'   Exit MRDESII.
+
+	IF Sel$ = "X" THEN
+
+'   Clear any lock we may have on the data file.  Don't bother with the
+'   result code, since we're going to exit in any case.
+
+		IF Net% = 1 THEN
+			Drive$ = UCASE$(LEFT$(LTRIM$(DataPath$), 1))
+ 
+			IF Drive$ < "A" OR Drive$ > "Z" THEN
+				Drive$ = ""
+			END IF
+
+			Result$ = NetFlag$(1, 2, "1", "0", Drive$)
+		END IF
+
+		CLS
+		END
+	END IF
+
+	Sel% = VAL(Sel$)
+
+'   Check for processed file.  If file has been processed, allow NO data
+'   entry or edit operations.
+
+	IF AllCheck%(Sel$, "1234567E") = 0 THEN
+		IF CheckFile%(DataPath$) = 1 THEN
+			GOTO Menu
+		END IF
+	END IF
+
+	CLS
+  
+'   If Sel% is greater than zero, a numeric option, data entry, was selected.
+
+	IF Sel% > 0 THEN
+		GOTO DataEntry
+	END IF
+
+'   Search/List Repair list file
+
+	IF Sel$ = "0" THEN
+		SHELL "RepList"
+		GOTO Menu
+	END IF
+
+'   Main menu help system.  This system allows for general MRDES II
+'   information to be made available to the operator simply by properly
+'   formatting and installing a file named "System.Hlp" in the help
+'   screen directory.
+
+	IF Sel$ = "H" THEN
+		CLS
+		FileName$ = HelpPath$ + "System.Hlp"
+		HelpFile FileName$, "Press ENTER to return to menu."
+		GOTO Menu
+	END IF
+
+'   List directory of records or list records on the disk.  Selecting the list
+'   records on the disk will present each record in file order in the same
+'   format as the data entry/edit screen.  Selecting the directory of records
+'   on the disk will list the file record number, record type, device code,
+'   device serial number and division.
+
+	IF INSTR("DL", Sel$) > 0 THEN
+		ToPrt% = 0
+		IF Cfg%(4) = 1 THEN
+			CLS
+			Cputs "List to printer (Y/N)", 10
+			ToPrt% = INSTR("NY", Get1Key$("YN", "")) - 1
+			PageFlag% = 0
+		END IF
+
+		CLS
+		LOCATE , , 0
+		Lf% = FREEFILE
+		OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Lf% LEN = LEN(DataRec)
+		GET #Lf%, 1, Info
+		NumRec% = Info.NumberOfRecords
+		CLOSE #Lf%
+		
+'   If there are no records in the file, just initialize a file and return to
+'   the main menu.
+
+		IF NumRec% = 0 THEN
+			InitFile
+			GOTO Menu
+		END IF
+
+'   There are records in the file.  Initialize resident screen pointer to
+'   indicate no screen definition file resident.
+
+		ResScn% = 0
+	   
+		IF Sel$ = "D" THEN
+
+'   Initialize screen counter to zero.
+
+			Counter% = 0
+
+'   Print heading for first page.
+
+			PrintHeading ToPrt%
+		END IF                  ' Sel$="D"
+
+		First% = 1              ' Set first and last record
+		Last% = NumRec%         ' numbers in file as default
+	  
+'   Listing the records in the file allows listing all records, or a range.
+
+		IF Sel$ = "L" THEN
+			CLS
+			IF NumRec% > 1 THEN
+				Cputs "All, or Part of the records in the file?", 5
+				Junk$ = Get1Key$("AP", "Please select A or P")
+			ELSE
+				Junk$ = "A"
+			END IF
+			CLS
+			LOCATE , , 0
+			IF Junk$ = "P" THEN
+				Cputs STR$(NumRec%) + " records in the file", 5
+				DO
+					PutXY 10, 1, SPACE$(79)
+					LOCATE 10, 10
+					INPUT "Starting record Number "; First%
+					IF First% < 1 THEN
+						CLOSE
+						GOTO Menu
+					END IF
+				LOOP WHILE First% > NumRec%
+				IF First% = NumRec% THEN
+					Last% = First%
+				ELSE
+					DO
+						PutXY 20, 1, SPACE$(79)
+						LOCATE 20, 10
+						INPUT "Ending Record Number "; Last%
+						IF Last% < 1 THEN
+							CLOSE
+							GOTO Menu
+						END IF
+					LOOP WHILE Last% > NumRec%
+				END IF
+			  
+'   If the operator happens to specify the last record first, just swap the
+'   two numbers and get on with it.  We're supposed to be helping, remember?
+
+				IF Last% < First% THEN
+					SWAP First%, Last%
+				END IF
+			END IF                  ' Part of the records in the file.
+		END IF                      ' Listing records
+
+		FOR y% = First% TO Last%
+			LOCATE , , 0
+			Lf% = FREEFILE
+			OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Lf% LEN = LEN(DataRec)
+			GET #Lf%, y% + 1, DataRec
+			Buffer$ = DataRec.Work
+			CLOSE #Lf%
+			Sel% = VAL(LEFT$(Buffer$, 1))
+		  
+'   Load screen file if necessary.
+
+			IF ResScn% <> Sel% THEN
+				LoadScrn
+				ResScn% = Sel%
+			END IF
+		   
+			ParseData Value%, Value$(), Buffer$, RecPos%(), Vlen%(), TimeStamp$
+		   
+'   We're looking at directory
+
+			IF Sel$ = "D" THEN
+				Work$ = RIGHT$(SPACE$(5) + STR$(y%), 5)
+				ParseIndex
+
+'   Pause at end of screen.
+
+				Counter% = Counter% + 1
+				IF Counter% = 20 AND y% < Last% AND ToPrt% = 0 THEN
+				  
+'   Enter and Space advance to the next record.  Esc returns to menu.
+
+					x$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), "Press ENTER to continue, ESC to Return to Menu.")
+					IF x$ = CHR$(27) THEN
+						CLOSE
+						CLS
+						GOTO Menu
+					END IF
+					Counter% = 0
+					CLS
+					PrintHeading ToPrt%
+				END IF
+			  
+'   Prompt at end of directory listing.
+
+				IF y% = Last% AND ToPrt% = 0 THEN
+					x$ = Get1Key$(CHR$(13) + CHR$(32), "End of directory.  Press ENTER to return to menu.")
+					CLOSE
+					GOTO Menu
+				END IF
+
+'   Form feed after printing 55 entries to printer.  Call DOS to keep Basic
+'   from doing us any favors.
+
+				IF Counter% = 55 AND y% < Last% AND ToPrt% = 1 THEN
+					InRegs.Ax = &H500               ' Char to ptr service
+					InRegs.Dx = &HC                 ' Form feed
+					INTERRUPT &H21, InRegs, OutRegs ' YO! DOS!
+					Counter% = 0
+					PrintHeading ToPrt%
+				END IF
+
+			ELSE
+			  
+'   Listing the records themselves.
+
+				PrintScreen
+			   
+				IF ToPrt% = 1 THEN
+				  
+'   Ok, this isn't DOS, it's the BIOS, in this case the screen print function.
+'   To list a record, we put it on the screen, using MRDES II's screen
+'   definition file, then call the BIOS screen print function.  What goes to
+'   the paper is a copy of a screen record.
+
+					INTERRUPT 5, InRegs, OutRegs
+				   
+'   If it's the first record on the page, space down 5 lines. If it's the
+'   second, do a form feed.
+
+					IF PageFlag% = 0 THEN
+						LPRINT STRING$(5, 13)
+					ELSE
+						InRegs.Ax = &H500
+						InRegs.Dx = &HC
+						INTERRUPT &H21, InRegs, OutRegs
+					END IF
+				  
+'   Toggle flag between zero and non-zero to indicate the first or second
+'   record on the page. The non-zero value is probably -1, for anyone who
+'   might actually care.
+
+					PageFlag% = (PageFlag% = 0)
+				END IF
+			   
+				COLOR Cfg%(0), Cfg%(1)
+				PutXY 25, 1, SPACE$(79)
+				IF y% < Last% AND ToPrt% = 0 THEN
+				  
+'   Keep the operator informed of where he/she is in the file.
+
+					Msg$ = "(Rec #" + STR$(y%) + " of" + STR$(NumRec%) + ") Press ENTER for next record, Esc to return to menu."
+'                    x$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), Msg$)
+			   
+					DO
+						DO
+							x$ = INKEY$
+						LOOP WHILE x$ = ""
+						IF LEN(x$) > 1 THEN
+							SELECT CASE ASC(RIGHT$(x$, 1))
+								CASE 72, 73             ' Up arrow or page up
+									x$ = CHR$(151)
+								CASE 80, 81             ' Down arrow or page down
+									x$ = CHR$(152)
+							END SELECT
+						END IF
+					LOOP UNTIL INSTR(CHR$(13) + CHR$(27) + CHR$(32) + CHR$(151) + CHR$(152), x$) > 0
+
+'   This system has exits from just about everywhere.  Esc key is the access.
+
+					IF x$ = CHR$(27) THEN
+						CLOSE
+						COLOR Cfg%(0), Cfg%(1)
+						CLS
+						GOTO Menu
+					END IF
+				END IF              ' Not done and listing to screen
+			END IF                  ' Listing records
+			IF x$ = CHR$(151) THEN
+				IF y% > 1 THEN
+					y% = y% - 2
+				ELSE
+					y% = 0
+				END IF
+			END IF
+		NEXT                        ' Next record to be listed.
+		CLOSE
+	   
+		IF ToPrt% = 0 THEN
+			
+			IF Sel$ = "L" THEN
+				IF y% >= NumRec% THEN
+					Msg$ = "Last record in file.  "
+				ELSE
+					Msg$ = "Last record to be listed.  "
+				END IF
+			END IF
+
+			x$ = Get1Key$(CHR$(13) + CHR$(32), Msg$ + "Press Enter to return to menu.")
+		ELSE
+		  
+'   Kick out a form feed, if necessary.
+
+			IF Sel$ = "D" OR (Sel$ = "L" AND PageFlag% <> 0) THEN
+				InRegs.Ax = &H500
+				InRegs.Dx = &HC
+				CALL INTERRUPT(&H21, InRegs, OutRegs)
+			END IF
+		END IF                  ' Listing to printer
+		GOTO Menu
+	END IF                      ' Listing index/records
+
+'   Edit records.  Records may be selected by record or serial number.
+'   Serial number selection can be keyed or done with barcode reader.
+
+	IF Sel$ = "E" OR Sel$ = "B" THEN
+	   
+		CLS
+		Lf% = FREEFILE
+		OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Lf% LEN = LEN(DataRec)
+		GET #Lf%, 1, Info
+		CLOSE #Lf%
+
+'   If there are no records in the file, just inititialize it and exit.
+	  
+		IF Info.NumberOfRecords = 0 THEN
+			InitFile
+			GOTO Menu
+		END IF
+
+		CLS
+	   
+		IF Sel$ = "E" THEN
+			IF Cfg%(5) <> 3 THEN
+				Cputs "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿", 9
+				Cputs "³ Select records by (S)erial or (R)ecord numbers? ³", 10
+				Cputs "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ", 11
+				Cputs "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄ¿", 19
+				Cputs "³Select S or R³", 20
+				Cputs "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÙ", 21
+				Ed$ = Get1Key$("RS" + CHR$(27), "Press Esc to return to menu")
+			ELSE
+				Cputs "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿", 9
+				Cputs "³ Select records by (S)erial or (R)ecord numbers, or ³", 10
+				Cputs "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ", 11
+				Cputs "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿", 19
+				Cputs "³Select S, R,  or B³", 20
+				Cputs "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ", 21
+				Ed$ = Get1Key$("BRS" + CHR$(27), "Press Esc to return to menu")
+			END IF
+
+			IF Ed$ = CHR$(27) THEN
+				GOTO Menu
+			END IF
+		ELSE
+			Ed$ = "B"
+		END IF
+
+'   Grab a record via Barcode
+
+Barcode:
+
+		IF Ed$ = "B" THEN
+			ResScn% = 0
+			EditRec% = 1
+			GOSUB TransfData                ' Yo! Barcode!
+			IF Work$ = "NO READ" THEN
+				GOTO Menu                   ' We quit!
+			END IF
+			Work$ = MID$(Work$, 4, 9)       ' Just the serial number, ma'am
+			WHILE LEFT$(Work$, 1) = "0" AND LEN(Work$) > 1
+				Work$ = MID$(Work$, 2)
+			WEND
+		   
+			Wrk$ = LTRIM$(RTRIM$(Work$))
+			
+'   Tell the operator what we think we're looking for.
+
+			CLOSE
+			CLS
+			Cputs "Searching for " + Wrk$, 12
+
+			Lf% = FREEFILE                  ' Get a file buffer
+			OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Lf% LEN = LEN(DataRec)
+			GET #Lf%, 1, Info
+		  
+'   Oops.. No records in the file... Just exit.
+
+			IF Info.NumberOfRecords = 0 THEN
+				CLOSE #Lf%
+				InitFile
+				GOTO Menu
+			END IF
+		  
+'   Ok, there's records here.  Look for ours.
+
+			WHILE EditRec% <= Info.NumberOfRecords
+				GET #Lf%, EditRec% + 1, DataRec
+				Buffer$ = DataRec.Work
+				Sel% = VAL(LEFT$(Buffer$, 1))
+				IF Sel% <> ResScn% THEN
+					LoadScrn
+					ResScn% = Sel%
+				END IF
+			  
+				ParseData Value%, Value$(), Buffer$, RecPos%(), Vlen%(), TimeStamp$
+			   
+'   We found it.  Now process it.
+
+				IF Wrk$ = LTRIM$(RTRIM$(Value$(2))) THEN
+					PrintScreen
+					Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+					GOTO InitPointers
+				END IF
+				EditRec% = EditRec% + 1
+			WEND
+			Junk$ = Get1Key$("YN", "Edit another record? (Y/N)")
+			IF Junk$ = "Y" THEN
+				GOTO Barcode
+			ELSE
+				GOTO Menu
+			END IF
+			Ed$ = ""        ' Clear this string
+		END IF              ' Ed$="B"
+
+'   This array may not exist when this routine is called, but the REDIM
+'   doesn't cause an error.
+
+		REDIM ProcRec%(Info.NumberOfRecords)
+	  
+'   Handle file with only one record
+
+		IF Info.NumberOfRecords = 1 AND Ed$ = "S" THEN
+			Ed$ = "R"
+		END IF
+
+		IF Ed$ = "S" THEN
+			CLS
+			PutXY 9, 10, "Select serial number(s) to edit."
+			PutXY 11, 10, "Separate serial numbers with spaces or commas."
+			LOCATE 13, 1
+			LINE INPUT Process$
+			Process$ = UCASE$(LTRIM$(RTRIM$(Process$)))
+			IF Process$ = "" THEN
+				GOTO Menu
+			END IF
+		  
+'   Dimension array of serial numbers.  The array will almost always be
+'   dimensioned larger than the number of records.
+   
+			REDIM ProcName$(LEN(Process$))
+		  
+'   Pointer to last element in array
+
+			ProcName% = 1
+			FOR x% = 1 TO LEN(Process$)
+				c$ = MID$(Process$, x%, 1)              ' Get the character
+				IF INSTR(CHR$(9) + " ,.", c$) > 0 THEN          ' If it's delimiter, move to next element.
+					ProcName% = ProcName% + 1
+				ELSE                                    ' If not, add character to current element.
+					ProcName$(ProcName%) = ProcName$(ProcName%) + c$
+				END IF
+			NEXT
+			FOR x% = 1 TO ProcName%
+				ProcName$(x%) = LTRIM$(RTRIM$(ProcName$(x%)))
+			NEXT
+		ELSE
+
+'   Ok, there's records there.  Set up the array and process.
+
+			CLS
+			IF Info.NumberOfRecords = 1 THEN
+				Cputs "One record in file.  Selecting it for edit", 5
+				OneRecord% = 1
+			ELSE
+				Cputs "There are" + STR$(Info.NumberOfRecords) + " records in the file", 5
+				Cputs "Enter record numbers to edit.", 7
+				Cputs "Separate individual record numbers with commas or periods,", 9
+				Cputs "ranges with hyphens.", 10
+				Cputs "Periods may be used in place of commas, if desired.", 22
+			END IF
+			LOCATE 11, 10
+			GOSUB SetFlags
+			IF Flag% = 1 THEN
+				ERASE ProcRec%
+				GOTO Menu
+			END IF
+			ResScn% = 0
+		END IF
+	  
+'   Now do the actual edit.  If the flag is set, load the record, and, if
+'   necessary, load the screen definition file.
+
+		FOR EditRec% = 1 TO Info.NumberOfRecords
+			IF ProcRec%(EditRec%) = 1 OR Ed$ = "S" THEN
+				Lf% = FREEFILE
+				OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Lf% LEN = LEN(DataRec)
+				GET #Lf%, EditRec% + 1, DataRec
+				Buffer$ = DataRec.Work
+				CLOSE #Lf%
+				Sel% = VAL(LEFT$(Buffer$, 1))
+				IF ResScn% <> Sel% THEN
+					LoadScrn
+					ResScn% = Sel%
+				END IF
+				ParseData Value%, Value$(), Buffer$, RecPos%(), Vlen%(), TimeStamp$
+			  
+'   If we're editing by serial number, see if the number's in our list.
+
+				IF Ed$ = "S" THEN
+					IF CheckSerial%((Value$(2)), Align$(2), ProcName$(), ProcName%) = 1 THEN
+						GOTO EditHere
+					END IF
+				END IF
+				PrintScreen
+				Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+				GOTO InitPointers
+			END IF
+
+EditHere:
+
+		NEXT
+		ERASE ProcRec%
+		GOTO Menu
+	END IF                      ' Editing record(s)
+
+'   Configure MRDES II.  This allows the operator to select screen colors,
+'   define data transfer availability/type and printer availability.
+
+	IF Sel$ = "C" THEN
+		IF Net% = 1 THEN
+			Drive$ = UCASE$(LEFT$(LTRIM$(DataPath$), 1))
+
+			IF Drive$ < "A" OR Drive$ > "Z" THEN
+				Drive$ = ""
+			END IF
+
+			Result$ = NetFlag$(1, 2, "1", "0", Drive$)
+		END IF
+		RUN "MRSCFG"
+	END IF
+
+'   Swap the work and process files.  Applicable to office machines only,
+'   this allows editing of the process file.  If hold file editing is
+'   necessary, the hold file disk can just be inserted in the incoming file
+'   disk drive.
+
+	IF Sel$ = "S" THEN
+		SWAP ProcPath$, DataPath$
+		Hold% = ABS(Hold% = 0)
+		GOTO Menu
+	END IF
+
+'   Toggle repair list cross check.  Office machines only!
+
+	IF Sel$ = "R" THEN
+		ToggleRepairList RepList%
+		GOTO Menu
+	END IF
+
+'   Toggle automatic data transfer
+
+	IF Sel$ = "A" THEN
+		AutoTran% = ABS(AutoTran% = 0)
+		GOTO Menu
+	END IF
+
+'   The living, or whatever.....
+   
+	END
+'============================================================================
+'   Data entry routine.  First task is to load the necessary screen file, and
+'   initialize all variables.
+
+DataEntry:
+
+'   Sel% is used to indicate what screen is being processed.
+
+	Cputs "ÚÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¿", 11
+	Cputs "³Loading screen³", 12
+	Cputs "ÀÄÄÄÄÄÄÄÄÄÄÄÄÄÄÙ", 13
+	LoadScrn
+	InitStrings DateLoc%, Default$(), Rinit%(), Value$(), Value%, Vlen%()
+  
+InitTransf:
+
+'   Automatic data transfer
+
+	IF Sel% < 3 AND EditRec% = 0 AND AutoTran% = 1 THEN
+		GOSUB DataTransf
+	END IF
+
+	PrintScreen
+	Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+
+'   Screen is loaded, initialized, and ready for action.  Initialize pointers,
+'   locate cursor, and Go!
+
+InitPointers:
+
+	Ptr% = 1
+	COLOR Cfg%(0), Cfg%(1)
+	PutXY 24, 1, SPACE$(79)
+	LOCATE 24, 1
+
+'   Error system is interactive in this system.  As a field is entered, if an
+'   error has been detected in the field, a message will be printed on screen
+'   line 24 to assist the operator.
+
+	IF Eflag%(Ptr%) > 0 THEN
+		Cputs Estring$(Ptr%), 24
+	END IF
+	COLOR Cfg%(2), Cfg%(3)
+	DataLoc% = 1
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+
+DataLoop:
+  
+'   Get a keystroke.  Verify the keystroke is something we want, and if so,
+'   act upon it.  The subprogram needs to know what screen is being processed
+'   as test and test/history screens have one and possibly two additional
+'   function key functions available.
+
+'   Test board work stations have a TSR which keeps the caps and num locks
+'   set.  Office machines cannot, as they need lowercase capability for other
+'   record operations and reports.  Actually, the caps lock part isn't
+'   necessary, as MRDES II converts input to upper case as necessary.  It may
+'   be possible to do the num lock thing within MRDES II also, but is more
+'   trouble than it's worth at this time.
+
+	DO
+		x$ = UCASE$(INKEY$)
+	LOOP WHILE x$ = ""
+  
+'   I want my cursor keys!!!!!!!!
+
+	IF LEN(x$) > 1 THEN
+		SELECT CASE ASC(RIGHT$(x$, 1))
+			CASE 18                 ' ALT/E - Go to next error field
+				Temp% = Ptr%
+				DO
+					Ptr% = Fwd%(Ptr%)
+				LOOP WHILE Ptr% <> Temp% AND Eflag%(Ptr%) = 0
+				FieldEntry
+				GOTO DataLoop
+			CASE 19                 ' ALT/R - Restore default information
+				RestoreDefault Value$(Ptr%), Default$(Ptr%), Ptr%, Vlen%(Ptr%)
+				PutXY Vline%(Ptr%), Vcol%(Ptr%), Value$(Ptr%)
+				LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1
+				DataLoc% = 1
+			CASE 30                 ' ALT/A - Dump field information
+				DumpEntry Ptr%
+				COLOR Cfg%(2), Cfg%(3)
+				GOTO DataLoop
+			CASE 71                 ' First field
+				GOSUB FirstFld
+			CASE 15, 72             ' Up arrow/Shift TAB - prev field
+				GOSUB PrvFld
+			CASE 75                 ' Left arrow - prev char
+				GOSUB CsrBwd
+			CASE 77                 ' Right arrow - next char
+				GOSUB CsrFwd
+			CASE 80                 ' Down arrow - next field
+				GOSUB NxtFld
+			CASE 30
+				DumpEntry Ptr%
+				GOTO DataLoop
+			CASE 59                 ' Function key 1
+				GOSUB WriteData     ' Checks and formats data, offers chance to write to disk
+			CASE 60                 ' Function key 2
+				GOSUB Split2Menu    ' Exit entry/edit screen to main menu
+			CASE 61                 ' Function key 3
+				GOSUB SerFl         ' Cursor to series full load as found entry/edit field
+			CASE 62                 ' Function key 4
+				GOSUB DataTransf    ' Initiate data transfer
+			CASE 63                 ' Function key 5
+				GOSUB NxtFld        ' Cursor to next data entry/edit field
+			CASE 64                 ' Function key 6
+				GOSUB PrvFld        ' Cursor to previous data entry/edit field
+			CASE 65                 ' Function key 7
+				GOSUB CsrFwd        ' Cursor forward one position
+			CASE 66                 ' Function key 8
+				GOSUB CsrBwd        ' Cursor backward on position
+			CASE 67                 ' Function key 9
+				GOSUB FirstFld      ' Cursor to first data entry/edit field
+			CASE 68                 ' Function key 10
+				GOSUB Help          ' Read help file
+			CASE 93                 ' Shift/F10 - Scan tracking list
+				SHELL "RepList"
+				PrintScreen
+				DataLoc% = 1
+				Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+				COLOR Cfg%(2), Cfg%(3)
+				LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+				GOTO DataLoop
+		END SELECT
+	END IF                          ' Special key (funct, alt)
+   
+	SELECT CASE x$
+		CASE CHR$(8)                ' Move one char position back
+			GOSUB CsrBwd
+		CASE CHR$(9), CHR$(13)      ' Next field
+			GOSUB NxtFld
+		CASE CHR$(27)               ' Check the data.  Do not write
+			GOSUB CheckData
+	END SELECT
+  
+'   Reject any invalid input right here.  For this reason, checking fields
+'   like remarks is more show than anything else, but must still be done to
+'   keep the screen files aligned.
+
+	IF x$ < CHR$(32) OR x$ > "Z" THEN
+		GOTO DataLoop
+	END IF
+
+'   If we get here, this character needs to be put into the data array.
+
+	MID$(Value$(Ptr%), DataLoc%, 1) = x$    ' Put it into array
+	LOCATE , , 0                            ' Turn off cursor
+	PRINT x$;                               ' Print value
+	DataLoc% = DataLoc% + 1                 ' Increment pointer
+  
+'   Move to the next array element if necessary.  The data arrays form a
+'   double linked list, with Fwd%() as the forward pointer, and Bwd%() as
+'   the backward pointer.
+
+	IF DataLoc% > Vlen%(Ptr%) THEN
+		MoveFieldPointer Ptr%, Fwd%(), Vline%()
+		ErrorString Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Eflag%(Ptr%), Estring$(Ptr%)
+		DataLoc% = 1
+		LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+	END IF
+	LOCATE , , 1, CsrTop%, CsrBot%          ' Turn cursor back on
+	GOTO DataLoop
+'============================================================================
+'   Beginning of function subroutines
+'----------------------------------------------------------------------------
+'   F1 - Check entered/edited data.  If all data checks pass, offer chance to
+'   write the data to the disk file.  If there's a problem, return to input
+'   routine at the first character of the first field where problem was
+'   detected with error flags and strings defined and ready to help.  Some
+'   error conditions, namely as found accuracies being out of limits on left
+'   as found meters, have been reduced to warnings.  These will inform and
+'   challenge the operator, but  will allow the operator to write the data if
+'   desired.
+
+WriteData:
+  
+'   Clear last meter written information
+
+	LastMeter$ = ""
+
+	CheckTheData Area1%, Area2%, ChkPath$, DataPath$, DateLoc%, EditRec%, Flag%, Ptr%, Sel%, Sfl%, Value%, Value$()
+
+'   If there's a problem, this restores the screen, positions the cursor at
+'   the beginning of the first field identified with a problem, and prints the
+'   error message on line 24.  It then returns to the entry/edit mode.
+   
+	IF Flag% = 1 THEN
+		BEEP
+		PrintScreen
+		RestoreScreen Cfg%(), DataLoc%, Eflag%(), Estring$(), Ptr%, Sel%, Sfl%, Vcol%(), Vline%()
+		RETURN DataLoop
+	END IF
+
+'   If the flag is set, the record data is checked against the repair list
+'   data.  This reduces one more error problem.  If there's no file there, or
+'   it's defined to not be checked, the flag will be clear and the check will
+'   not be performed.
+
+	IF RepList% <> 0 AND Sel% = 1 THEN
+		CheckRepairList Align$(), Cfg%(), Sel%, Value$()
+	END IF
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Code to copy as found information to as left fields for left as found
+'   meters will go here.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+
+'   No errors found, but possible warnings.  Inform the operator, and find out
+'   if we are to write the record.  The check against the repair list does not
+'   set any error or warning flags, so it is possible to have no errors or
+'   warnings, and still have the operator not wish to write the data.
+
+	PrintScreen
+   
+	COLOR Cfg%(0), Cfg%(1)
+	PutXY 24, 1, SPACE$(79)
+   
+	IF Flag% = 0 THEN
+	  
+'   No errors or warnings.
+
+		x$ = Get1Key$("YN", "No errors found.  Write it? (Y/N)")
+	ELSE
+	  
+'   Warnings.  Allow operator to write if desired.
+		BEEP
+		x$ = Get1Key$("YN", "Accuracy warnings!  Write the data? (Y/N)")
+	END IF
+  
+'   Operator says no.  Restore the screen, and return to data entry/edit.
+   
+	IF x$ = "N" THEN
+		IF Flag% = 0 THEN
+			Ptr% = 1
+		END IF
+		RestoreScreen Cfg%(), DataLoc%, Eflag%(), Estring$(), Ptr%, Sel%, Sfl%, Vcol%(), Vline%()
+		RETURN DataLoop
+	ELSE
+	  
+'   Checks have passed and operator approves.  Write the data, updating file
+'   pointers and other data as appropriate, and return.
+
+		LoadWrite
+		IF EditRec% = 0 THEN
+			ReInit
+		END IF
+	  
+'   EditRec% is used both as a flag for entry/edit modes, and to indicate what
+'   record is being edited.  Value is zero for entry mode.
+
+		IF EditRec% = 0 THEN
+			RETURN InitTransf
+		ELSE
+			COLOR Cfg%(0), Cfg%(1)
+			IF Ed$ = "B" THEN
+				RETURN Barcode
+			ELSE
+				RETURN EditHere
+			END IF
+		END IF
+	END IF                  ' Write record - check system returned warnings
+
+'   Checks the entered/edited data.  Does not offer chance to write to disk.
+'   This system offers the operator to interactively identify and correct
+'   errors and warnings.
+
+CheckData:
+   
+	CheckTheData Area1%, Area2%, ChkPath$, DataPath$, DateLoc%, EditRec%, Flag%, Ptr%, Sel%, Sfl%, Value%, Value$()
+   
+	IF Flag% = 0 THEN
+	  
+'   No errors found.  Inform the operator, restore the screen, and when
+'   operator presses ENTER, return to data entry/edit.
+
+		PrintScreen
+		COLOR Cfg%(0), Cfg%(1)
+		PutXY 24, 1, SPACE$(79)
+		x$ = Get1Key$(CHR$(13), "No errors found.  Press ENTER to return to data entry/edit")
+		Ptr% = 1
+	ELSE
+
+'   Error or warning found.  Restore the screen, place the cursor on the
+'   first character of the first field identified with a problem, and return
+'   to data entry/edit.
+
+		BEEP
+		PrintScreen
+		ErrorString Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Eflag%(Ptr%), Estring$(Ptr%)
+	END IF                  ' There were errors/warnings
+
+	DataLoc% = 1
+	Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+	COLOR Cfg%(2), Cfg%(3)
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+	RETURN DataLoop
+'----------------------------------------------------------------------------
+'   F2 - Return to menu
+
+Split2Menu:
+
+'   Give the operator a chance to reconsider or correct for an error.
+
+	COLOR Cfg%(0), Cfg%(1)
+   
+	IF EditRec% = 0 THEN
+	  
+'   Entry mode.  Here there are two options, discard entry and exit to menu,
+'   or return to data entry.
+
+		IF Get1Key$("YN", "Do you really want to exit to the main menu? (Y/N)") = "Y" THEN
+			RETURN Menu
+		END IF
+	ELSE
+
+'   Edit mode.  Here there are three options, return to data edit, return to
+'   the main menu or go to next edit record.  If the selection for the next
+'   record or exit to main menu is made, all input to this screen is
+'   discarded.
+
+		x$ = Get1Key$("NMR", "Next record, Menu, Return to this record (N/M/R)")
+		IF x$ = "M" THEN
+			RETURN Menu
+		END IF
+		IF x$ = "N" THEN
+			RETURN EditHere
+		END IF
+	END IF                      ' Return to menu - Entry or Edit mode?
+
+'   In either case, this is return to data entry/edit screen.
+
+	Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+	COLOR Cfg%(2), Cfg%(3)
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%) + DataLoc% - 1, 1, CsrTop%, CsrBot%
+	RETURN DataLoop
+
+'----------------------------------------------------------------------------
+'   F3 - Move cursor to series full load as found.
+
+SerFl:
+
+	Ptr% = Sfl%                     ' Grab the pointer.
+	WHILE Vline%(Ptr%) <= 0         ' Move to the first element to be
+		Ptr% = Fwd%(Ptr%)           ' displayed, if necessary.
+	WEND
+	ErrorString Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Eflag%(Ptr%), Estring$(Ptr%)
+	DataLoc% = 1
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+	RETURN DataLoop
+
+'----------------------------------------------------------------------------
+'   F4 - Data transfer is available in both entry and edit modes, if defined
+'   in the configuration file.
+
+DataTransf:
+
+'   Data transfer
+   
+'   Case 1 is RFL 5455
+'   Case 2 is Knopp ST-31
+'   Case 3 is Barcode scanner
+'   Case 4 is RFL 5800
+
+	SELECT CASE Cfg%(5)
+
+'   RFL 5455/5800.  We get meter record and test data from these.
+
+		CASE 1, 4
+			GOSUB TransfData
+			IF Work$ <> "NO READ" THEN
+				GOSUB ParseData
+			END IF
+
+'   Knopp ST-31.  Accuracies only, and only if data transfer's being used.
+'   WARNING!:  This is a very lightly edited copy of a working routine, but
+'   has not been tested!  It may be tested if/when time permits, but this
+'   testing is not a priority as the Protection and Measurements Electronics
+'   Lab does not and probably never will use it.  Operators find it easier
+'   simply to key the data directly into MRDES II than to try to remember all
+'   the keystrokes necessary to make this clunky data transfer system work
+'   properly.
+
+		CASE 2
+			AfAl% = 0
+			CLS
+			Cputs "1 - As Found", 10
+			Cputs "2 - As Left", 20
+			Junk$ = Get1Key$("12", "")
+			GOSUB TransfData
+			IF Work$ <> "NO READ" THEN
+				GOSUB ParseData
+			END IF
+
+'   Barcode scan.  Gives us meter nameplate data only.
+
+		CASE 3
+			GOSUB TransfData
+			IF Work$ <> "NO READ" THEN
+				GOSUB ParseData
+			END IF
+	END SELECT                  ' Data transfer type
+
+	PrintScreen
+	Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+	RETURN InitPointers
+
+'   The actual data transfer.  Three possible data transfer sources, three
+'   different sets of RS232 parameters.  Standards are nice ---- Or so the
+'   rumor goes.
+
+TransfData:
+
+'   Opens communication link with file buffer #1, set delay index value.
+
+	Cb% = FREEFILE
+	SELECT CASE Cfg%(5)
+
+		CASE 1              ' RFL 5455 data transfer
+
+			OPEN "COM1:1200,N,8,2,CS,DS" FOR RANDOM AS #Cb%
+			Delay& = 20
+
+		CASE 2              ' Knopp ST31 data transfer
+
+			OPEN "COM1:1200,N,8,1,CS,DS" FOR RANDOM AS #Cb%
+			Delay& = 10
+
+		CASE 3              ' Barcode data transfer
+
+			OPEN "COM1:9600,E,7,1,CS,DS" FOR RANDOM AS #Cb%
+			Delay& = 5
+
+		CASE 4              ' RFL 5800 data transfer
+
+			OPEN "COM1:1200,N,8,2,CS,DS" FOR INPUT AS #Cb%
+			Delay& = 10
+   
+	END SELECT                  ' Data transfer type
+
+'   Some day I'm going to put something in MRDES II that cannot be overridden
+'   without changing the source code.  This is not that day.  The delays
+'   selected above are very conservative, and better data transfer performance
+'   is possible in all cases.  If the implementor wishes to experiment, set
+'   the DELAY environment variable.  MRDES II will allow just about anything,
+'   but numbers are the only characters that will actually do anything.
+
+	IF ENVIRON$("DELAY") <> "" THEN
+		x& = VAL(ENVIRON$("DELAY"))
+		IF x& > 0 THEN
+			Delay& = x&
+		END IF
+	END IF
+  
+	COLOR Cfg%(0), Cfg%(1)
+	CLS
+	IF LastMeter$ <> "" THEN
+		Cputs LastMeter$, 10
+	END IF
+	Cputs "Press E to exit data transfer.", 15
+	Work$ = "NO READ"
+  
+'   The next line clears the inkey buffer.
+
+	Junk$ = INKEY$
+
+'   We wait here for the first incoming character, then wait the number of
+'   seconds defined by Delay&, before reading the data.  Exit is allowed while
+'   waiting for the first character, not allowed once the first character is
+'   detected.
+
+	DO
+		Junk$ = UCASE$(INKEY$)
+	  
+'   Pressing "E" will allow exit from data transfer loop.  The string returned
+'   in this case will be the "NO READ" flag.
+
+		IF Junk$ = "E" THEN
+			CLOSE
+			IF VAL(Sel$) > 0 THEN
+				PrintScreen
+				Funckeys Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Cfg%(5), Sel%, Sfl%
+				RETURN InitPointers
+			ELSE
+				RETURN
+			END IF
+		END IF
+	LOOP WHILE LOC(Cb%) = 0         ' Wait for first character
+  
+'   Let operator know things are happening.  An abort would undoubtably cause
+'   problems here, so don't allow it.
+
+	CLS
+	Cputs "Receiving Data", 10
+	x& = TIMER + Delay&
+  
+'   Time delay.  This won't work in a transfer crossing over midnight.
+'   Fortunately, not many meters are tested at that hour, so there's not much
+'   point in worrying about adding the code to handle that problem.
+
+	WHILE TIMER < x&
+	WEND
+  
+'   This lets the buffer take care of the actual data transfer, then we read
+'   the buffer.  This way, even a 4.77 Mhz slug can keep up.  QB4.5 appears
+'   to use interrupt driven serial I/O.  It's about time a major vendor used
+'   that big 8250 chip the way Intel designed it.  The 5800 is the current
+'   wierdo.
+
+	SELECT CASE Cfg%(5)
+		CASE 4
+			LINE INPUT #Cb%, First$
+			LINE INPUT #Cb%, Second$
+			LINE INPUT #Cb%, Work$
+		CASE ELSE
+			Work$ = INPUT$(LOC(Cb%), #Cb%)
+	END SELECT
+   
+	CLOSE #Cb%
+	RETURN
+
+'   Barcode serial number to edit select
+
+	IF Ed$ = "B" THEN
+		PRINT
+		PRINT Work$
+		RETURN
+	END IF
+
+ParseData:
+   
+	SELECT CASE Cfg%(5)
+
+		CASE 1                      ' RFL 5455
+
+'   RFL 5455 data parse routine.  A lot of information about the meter and a
+'   bunch of test results from this one.
+
+'   Serial Number
+
+			x% = INSTR(Work$, "SERIAL NO.:") + 16
+			x$ = MID$(Work$, x%, 10)
+			IF RIGHT$(x$, 1) = CHR$(13) THEN
+				x$ = LEFT$(x$, 9)
+			END IF
+			IF x$ <> SPACE$(LEN(x$)) THEN
+				x$ = LTRIM$(RTRIM$(x$))
+			END IF
+		  
+'   Array element 2 is serial number.
+
+			Value$(2) = LEFT$(x$ + SPACE$(Vlen%(2)), Vlen%(2))
+
+'   Device Code
+
+			x% = INSTR(Work$, "COMPANY CODE") + 17
+			Value$(1) = MID$(Work$, x%, Vlen%(1))
+
+'   Form number.  We now get base information from the device code, where it
+'   has been all along.
+
+			IF DateLoc% > 0 THEN
+				x% = INSTR(Work$, "FORM") + 17
+				Value$(DateLoc% + 1) = LEFT$(MID$(Work$, x%, 2) + SPACE$(Vlen%(DateLoc% + 1)), Vlen%(DateLoc% + 1))
+			END IF
+
+'   Kh
+
+			IF DateLoc% > 0 THEN
+				x% = INSTR(Work$, "Kh") + 15
+				x$ = MID$(Work$, x%, 6)
+				FOR x% = 1 TO 6
+					IF INSTR("0123456789 .", MID$(x$, x%, 1)) = 0 THEN
+						MID$(x$, x%, 1) = " "
+					END IF
+				NEXT
+				IF x$ <> SPACE$(LEN(x$)) THEN
+					x$ = LTRIM$(RTRIM$(x$))
+				END IF
+				Value$(DateLoc% + 2) = LEFT$(x$ + SPACE$(Vlen%(DateLoc% + 2)), Vlen%(DateLoc% + 2))
+			END IF
+
+'   KWH read as found
+
+			IF DateLoc% > 0 THEN
+				x% = INSTR(Work$, "DIALS") + 17
+				x$ = MID$(Work$, x%, 5)
+				IF x$ <> SPACE$(LEN(x$)) THEN
+					x$ = LTRIM$(RTRIM$(x$))
+				END IF
+				Value$(DateLoc% - 1) = LEFT$(x$ + SPACE$(Vlen%(DateLoc% - 1)), Vlen%(DateLoc% - 1))
+			END IF
+
+'   Operator (tester)
+
+			x% = INSTR(Work$, "OPERATOR")
+			MID$(Value$(4), 1, 3) = MID$(Work$, x% + 17, 3)
+		   
+'   Clear tester Id to avoid problems with testers whose initials end in LL
+
+			MID$(Work$, x% + 17, 3) = SPACE$(3)
+
+'   Accuracies --------------------------------------------------------------
+
+'   Series Full Load.  Sfl% is passed by value, not reference, so the routine
+'   Grab5455Acc can't modify it.  Work$ is also passed by value, so if the
+'   routine needs to, it can modify its local copy for better efficiency.  Of
+'   course, after all that, I wrote the routine so it only modifies what it's
+'   returning.
+
+			Grab5455Acc (Work$), "SF  ", (Sfl%), Sfl% + 1
+
+'   Series Lag
+
+			Grab5455Acc (Work$), "SP  ", Sfl% + 8, Sfl% + 9
+
+'   Series Light Load
+
+			Grab5455Acc (Work$), "SL  ", Sfl% + 16, Sfl% + 17
+
+'   Right Element Full Load
+   
+			Grab5455Acc (Work$), "RF  ", Sfl% + 4, Sfl% + 7
+
+'   Right Element Lag
+
+			Grab5455Acc (Work$), "RP  ", Sfl% + 12, Sfl% + 15
+
+'   Right Element Light Load
+
+			Grab5455Acc (Work$), "RL  ", Sfl% + 20, Sfl% + 23
+
+'   Center Element Full Load
+
+			Grab5455Acc (Work$), "CF  ", Sfl% + 3, Sfl% + 6
+
+'   Center Element Lag
+
+			Grab5455Acc (Work$), "CP  ", Sfl% + 11, Sfl% + 14
+
+'   Center Element Light Load
+
+			Grab5455Acc (Work$), "CL  ", Sfl% + 19, Sfl% + 22
+
+'   Left Element Full Load
+
+			Grab5455Acc (Work$), "LF  ", Sfl% + 2, Sfl% + 5
+
+'   Left Element Lag
+
+			Grab5455Acc (Work$), "LP  ", Sfl% + 10, Sfl% + 13
+		   
+'   Left Element Light Load
+
+			Grab5455Acc (Work$), "LL  ", Sfl% + 18, Sfl% + 21
+
+'   It's accuracies only from the Knopp ST-31.  Other information is possible,
+'   but more trouble than it's worth.
+
+		CASE 2                  ' Knopp ST-31
+		   
+			x% = INSTR(Work$, "FL ")
+			IF x% > 0 THEN
+					Value$(Sfl% + AfAl%) = LEFT$(MID$(Work$, x% + 3, 6) + SPACE$(Vlen%(Sfl% + AfAl%)), Vlen%(Sfl% + AfAl%))
+					Value$(Sfl% + 2 + (AfAl% * 3)) = LEFT$(MID$(Work$, x% + 10, 6) + SPACE$(Sfl% + 2 + (AfAl% * 3)), Vlen%(Sfl% + 2 + (AfAl% * 3)))
+					Value$(Sfl% + 3 + (AfAl% * 3)) = LEFT$(MID$(Work$, x% + 17, 6) + SPACE$(Sfl% + 3 + (AfAl% * 3)), Vlen%(Sfl% + 3 + (AfAl% * 3)))
+					Value$(Sfl% + 4 + (AfAl% * 3)) = LEFT$(MID$(Work$, x% + 24, 6) + SPACE$(Sfl% + 4 + (AfAl% * 3)), Vlen%(Sfl% + 4 + (AfAl% * 3)))
+			END IF
+		   
+			x% = INSTR(Work$, "PF ")
+			IF x% > 0 THEN
+					Value$(Sfl% + 8 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 3, 6) + SPACE$(Vlen%(Sfl% + 8 + (AfAl% * 8))), Vlen%(Sfl% + 8 + (AfAl% * 8)))
+					Value$(Sfl% + 10 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 10, 6) + SPACE$(Vlen%(Sfl% + 10 + (AfAl% * 8))), Vlen%(Sfl% + 10 + (AfAl% * 8)))
+					Value$(Sfl% + 11 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 17, 6) + SPACE$(Vlen%(Sfl% + 11 + (AfAl% * 8))), Vlen%(Sfl% + 11 + (AfAl% * 8)))
+					Value$(Sfl% + 12 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 24, 6) + SPACE$(Vlen%(Sfl% + 12 + (AfAl% * 8))), Vlen%(Sfl% + 12 + (AfAl% * 8)))
+			END IF
+		   
+			x% = INSTR(Work$, "LL ")
+			IF x% > 0 THEN
+					Value$(Sfl% + 9 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 3, 6) + SPACE$(Vlen%(Sfl% + 9 + (AfAl% * 8))), Vlen%(Sfl% + 9 + (AfAl% * 8)))
+					Value$(Sfl% + 13 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 10, 6) + SPACE$(Vlen%(Sfl% + 13 + (AfAl% * 8))), Vlen%(Sfl% + 13 + (AfAl% * 8)))
+					Value$(Sfl% + 14 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 17, 6) + SPACE$(Vlen%(Sfl% + 14 + (AfAl% * 8))), Vlen%(Sfl% + 14 + (AfAl% * 8)))
+					Value$(Sfl% + 15 + (AfAl% * 8)) = LEFT$(MID$(Work$, x% + 24, 6) + SPACE$(Vlen%(Sfl% + 15 + (AfAl% * 8))), Vlen%(Sfl% + 15 + (AfAl% * 8)))
+			END IF
+	  
+'   Meter information only from barcode label.  This isn't as bad as it might
+'   sound, as the information transfered includes practically all needed
+'   record information.  About the only thing that's not available is the
+'   Ohio Power Division/Area Code.
+   
+		CASE 3                      ' Barcode
+			Value$(1) = LEFT$(MID$(Work$, 13, 5) + SPACE$(Vlen%(1)), Vlen%(1))
+			Value$(2) = LEFT$(MID$(Work$, 4, 9) + SPACE$(Vlen%(2)), Vlen%(2))
+			TestCode$ = MID$(Work$, 1, 2)
+			Mfr$ = MID$(Work$, 3, 1)
+
+'   Look up mfr.
+
+			Mfr% = INSTR("ACDFG", Mfr$)
+			IF Mfr% > 0 THEN
+				MID$(Value$(5), 2, 1) = MID$("13467", Mfr%, 1)
+			END IF
+
+'   Look up form and Kh
+
+			Bc% = FREEFILE
+			OPEN ScnPath$ + "BarTable.Dat" FOR INPUT AS #Bc%
+			WHILE TestCode$ <> Tc$ AND NOT EOF(Bc%)
+				INPUT #Bc%, Tc$, Form$, Kh$
+			WEND
+		   
+			CLOSE
+			IF DateLoc% > 0 THEN
+				IF TestCode$ <> Tc$ THEN
+			  
+'   Woops.  Didn't find it.
+
+					Value$(DateLoc% + 1) = SPACE$(Vlen%(DateLoc% + 1))
+					Value$(DateLoc% + 2) = SPACE$(Vlen%(DateLoc% + 2))
+				ELSE
+
+'   Ok, we found it.
+
+					Value$(DateLoc% + 1) = RIGHT$(SPACE$(Vlen%(DateLoc% + 1)) + Form$, Vlen%(DateLoc% + 1))
+					Value$(DateLoc% + 2) = LEFT$(Kh$ + SPACE$(Vlen%(DateLoc% + 2)), Vlen%(DateLoc% + 2))
+				END IF
+			END IF
+   
+		CASE 4                      ' RFL 5800
+
+' Code
+		  
+			Value$(1) = LEFT$(MID$(First$, 107, 5), Vlen%(1))  ' Original line
+
+'            Value$(1) = LEFT$(MID$(First$, 114, 5), Vlen%(1)) ' CSP Mound Street
+		   
+'   Serial number
+
+			Value$(2) = LEFT$(MID$(First$, 2, 3) + MID$(First$, 6, 3) + MID$(First$, 10, 3), Vlen%(2))
+
+'   Kh
+
+			Value$(DateLoc% + 2) = LEFT$(LEFT$(LTRIM$(STR$(VAL(MID$(First$, 102, 5)) / 1000)) + SPACE$(Vlen%(DateLoc% + 2)), Vlen%(DateLoc% + 2)), Vlen%(DateLoc% + 2))
+
+'   Form number
+
+			Value$(DateLoc% + 1) = LEFT$(MID$(First$, 85, Vlen%(DateLoc% + 1)), Vlen%(DateLoc% + 1))
+
+'   Accuracies.  First fix the string
+
+			Second$ = LTRIM$(Second$)
+			WHILE LEFT$(Second$, 1) <> "B"
+				Second$ = MID$(Second$, 2)
+			WEND
+
+'   Series accuracies
+
+			Value$(Sfl%) = Grab5800Acc$(MID$(Second$, 2, 5), 2, Vlen%(Sfl%))
+			Value$(Sfl% + 8) = Grab5800Acc$(MID$(Second$, 22, 5), 2, Vlen%(Sfl% + 8))
+			Value$(Sfl% + 16) = Grab5800Acc$(MID$(Second$, 42, 5), 2, Vlen%(Sfl% + 16))
+
+			Value$(Sfl% + 1) = Grab5800Acc$(MID$(Second$, 62, 5), 2, Vlen%(Sfl% + 1))
+			Value$(Sfl% + 9) = Grab5800Acc$(MID$(Second$, 82, 5), 2, Vlen%(Sfl% + 9))
+			Value$(Sfl% + 17) = Grab5800Acc$(MID$(Second$, 102, 5), 2, Vlen%(Sfl% + 17))
+
+'   Left Element accuracies
+
+			Value$(Sfl% + 2) = Grab5800Acc$(MID$(Second$, 7, 5), 2, Vlen%(Sfl% + 2))
+			Value$(Sfl% + 10) = Grab5800Acc$(MID$(Second$, 27, 5), 2, Vlen%(Sfl% + 10))
+			Value$(Sfl% + 18) = Grab5800Acc$(MID$(Second$, 47, 5), 2, Vlen%(Sfl% + 18))
+
+			Value$(Sfl% + 5) = Grab5800Acc$(MID$(Second$, 67, 5), 2, Vlen%(Sfl% + 2))
+			Value$(Sfl% + 13) = Grab5800Acc$(MID$(Second$, 87, 5), 2, Vlen%(Sfl% + 10))
+			Value$(Sfl% + 21) = Grab5800Acc$(MID$(Second$, 107, 5), 2, Vlen%(Sfl% + 18))
+
+'   Center Element accuracies
+
+			Value$(Sfl% + 3) = Grab5800Acc$(MID$(Second$, 12, 5), 2, Vlen%(Sfl% + 3))
+			Value$(Sfl% + 11) = Grab5800Acc$(MID$(Second$, 32, 5), 2, Vlen%(Sfl% + 11))
+			Value$(Sfl% + 19) = Grab5800Acc$(MID$(Second$, 52, 5), 2, Vlen%(Sfl% + 19))
+
+			Value$(Sfl% + 6) = Grab5800Acc$(MID$(Second$, 72, 5), 2, Vlen%(Sfl% + 6))
+			Value$(Sfl% + 14) = Grab5800Acc$(MID$(Second$, 92, 5), 2, Vlen%(Sfl% + 14))
+			Value$(Sfl% + 22) = Grab5800Acc$(MID$(Second$, 112, 5), 2, Vlen%(Sfl% + 22))
+
+'   Right Element accuracies
+
+			Value$(Sfl% + 4) = Grab5800Acc$(MID$(Second$, 17, 5), 2, Vlen%(Sfl% + 4))
+			Value$(Sfl% + 12) = Grab5800Acc$(MID$(Second$, 37, 5), 2, Vlen%(Sfl% + 12))
+			Value$(Sfl% + 20) = Grab5800Acc$(MID$(Second$, 57, 5), 2, Vlen%(Sfl% + 20))
+
+			Value$(Sfl% + 7) = Grab5800Acc$(MID$(Second$, 77, 5), 2, Vlen%(Sfl% + 7))
+			Value$(Sfl% + 15) = Grab5800Acc$(MID$(Second$, 97, 5), 2, Vlen%(Sfl% + 15))
+			Value$(Sfl% + 23) = Grab5800Acc$(MID$(Second$, 117, 5), 2, Vlen%(Sfl% + 23))
+
+
+	END SELECT                      ' Data transfer type
+   
+	RETURN
+
+'----------------------------------------------------------------------------
+'   F5 - Move cursor to beginning of next field.  Nothing fancy here, just
+'   grab the information from the foward link, then call FieldEntry to
+'   complete the task.  Pressing the Enter key also calls this routine.
+
+NxtFld:
+
+	MoveFieldPointer Ptr%, Fwd%(), Vline%()
+	FieldEntry
+	RETURN DataLoop
+
+'----------------------------------------------------------------------------
+'   F6 - Move cursor to beginning of previous field.  Same as NxtFld, except
+'   we use the backward pointer.
+
+PrvFld:
+
+	MoveFieldPointer Ptr%, Bwd%(), Vline%()
+	FieldEntry
+	RETURN DataLoop
+
+'----------------------------------------------------------------------------
+'   F7 - Move the cursor forward one position, moving to the first position of
+'   the next field if needed.
+
+CsrFwd:
+	LOCATE , , 0            ' By the way, this line turns the cursor off.
+	DataLoc% = DataLoc% + 1
+	IF DataLoc% > Vlen%(Ptr%) THEN
+		MoveFieldPointer Ptr%, Fwd%(), Vline%()
+		FieldEntry
+	END IF
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%) + DataLoc% - 1, 1, CsrTop%, CsrBot%
+	RETURN DataLoop
+
+'----------------------------------------------------------------------------
+'   F8 - Move the cursor backward one position, moving to the last position of the
+'   previous field if needed.  The backspace key also calls this routine.
+
+CsrBwd:
+	LOCATE , , 0
+	DataLoc% = DataLoc% - 1
+	IF DataLoc% = 0 THEN
+		MoveFieldPointer Ptr%, Bwd%(), Vline%()
+		ErrorString Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Eflag%(Ptr%), Estring$(Ptr%)
+		DataLoc% = Vlen%(Ptr%)
+	END IF
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%) + DataLoc% - 1, 1, CsrTop%, CsrBot%
+	RETURN DataLoop
+
+'----------------------------------------------------------------------------
+'   F9 - Move cursor to beginning of first field.  Not much to this routine,
+'   turn off the function keys and jump back to the initialize point of the
+'   input loop.  The call to turn off the function keys may not be necessary.
+
+FirstFld:
+	RETURN InitPointers
+
+'----------------------------------------------------------------------------
+'   F10 - Help!
+
+Help:
+
+'   Generate help screen filename from pathname, information from screen
+'   file, and extension.
+
+	IF LEFT$(LTRIM$(Help$(Ptr%)), 1) = "@" THEN
+		FileName$ = HelpPath$ + LTRIM$(RTRIM$(MID$(Help$(Ptr%), 2))) + ".PS"
+		Temp$ = GetVSelection$(Vlen%(Ptr%), FileName$, Select$())
+		IF LTRIM$(RTRIM$(Temp$)) <> "" THEN
+			Value$(Ptr%) = LEFT$(LTRIM$(RTRIM$(Temp$)) + SPACE$(Vlen%(Ptr%)), Vlen%(Ptr%))
+			COLOR Cfg%(2), Cfg%(3)
+			PutXY Vline%(Ptr%), Vcol%(Ptr%), Value$(Ptr%)
+			MoveFieldPointer Ptr%, Fwd%(), Vline%()
+			FieldEntry
+			LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1
+		END IF
+
+	ELSE
+		FileName$ = HelpPath$ + Help$(Ptr%) + ".HLP"
+   
+		HelpFile FileName$, "Press ENTER to return to data entry/edit"
+
+	END IF
+   
+	COLOR Cfg%(2), Cfg%(3)
+
+	RETURN DataLoop
+'============================================================================
+'   End of function subroutines
+'----------------------------------------------------------------------------
+'   Beginning of misc subroutines
+'============================================================================
+'   Subroutine to parse input string and set flags in array for edit/list.
+
+SetFlags:
+
+'   Get operator input
+
+	IF OneRecord% > 0 THEN
+		Rec$ = "1"
+		OneRecord% = 0
+	ELSE
+		LINE INPUT Rec$
+	END IF
+  
+'   Just exit on null entry.
+
+	IF Rec$ = "" THEN
+		Flag% = 0
+		RETURN
+	END IF
+
+'   Check input for invalid characters.  Prompt for new string if any invalid
+'   characters are found.
+
+	Flag% = 0
+	FOR x% = 1 TO LEN(Rec$)
+	  
+'   Allow periods or spaces to be input for commas.  There is no comma key on
+'   the numeric keypad.
+
+		IF INSTR(" .", MID$(Rec$, x%, 1)) > 0 THEN
+			MID$(Rec$, x%, 1) = ","
+		END IF
+	   
+		IF INSTR("0123456789,-", MID$(Rec$, x%, 1)) = 0 THEN
+			Flag% = 1
+		END IF
+	NEXT
+  
+'   It's bad.
+
+	IF Flag% = 1 THEN
+		CLS
+		PRINT "Bad character"
+		GOTO SetFlags
+	END IF
+  
+'   Add ending flag to string.  Doing it this way eliminates the need for
+'   error trapping.
+
+	Rec$ = Rec$ + "**"
+   
+	WHILE LEFT$(Rec$, 1) <> "*"
+		WHILE INSTR("0123456789", LEFT$(Rec$, 1)) = 0
+			Rec$ = MID$(Rec$, 2)
+		WEND
+	  
+'   Get the first value from the string.
+
+		First% = VAL(Rec$)
+	  
+'   Adjust the value to be within the range from one to the number of records
+'   in the file, if necessary.
+
+		IF First% < 1 THEN
+			First% = 1
+		END IF
+		IF First% > Info.NumberOfRecords THEN
+			First% = Info.NumberOfRecords
+		END IF
+	  
+'   Remove the just parsed number from the string.
+
+		WHILE INSTR("0123456789", LEFT$(Rec$, 1)) > 0
+			Rec$ = MID$(Rec$, 2)
+		WEND
+	  
+'   Process one or range of records?
+
+		IF LEFT$(Rec$, 1) = "-" THEN
+		  
+'   Range of records.
+
+			Rec$ = MID$(Rec$, 2)
+			IF LEFT$(Rec$, 1) = "*" THEN
+				Last% = First%
+			ELSE
+				Last% = VAL(Rec$)
+				IF Last% > Info.NumberOfRecords THEN
+					Last% = Info.NumberOfRecords
+				END IF
+				WHILE INSTR("0123456789", LEFT$(Rec$, 1)) > 0
+					Rec$ = MID$(Rec$, 2)
+				WEND
+			END IF
+		ELSE
+		  
+'   One record
+
+			Rec$ = MID$(Rec$, 2)
+			Last% = First%
+		END IF                  ' Range of records/one record
+	  
+'   Range can be specified backwards, if operator happens to do so.
+
+		IF First% > Last% THEN
+			SWAP Last%, First%
+		END IF
+		  
+'   If one record is being processed, this code will be executed just as
+'   though it were a range.  The net effect is the same.
+
+		FOR x% = First% TO Last%
+			ProcRec%(x%) = 1
+		NEXT
+	WEND                        ' Checking for end of string
+
+	Flag% = 0
+	RETURN
+
+'   End of misc subroutines
+'============================================================================
+'   This line's here to protect the error traps
+	END
+'============================================================================
+'   Beginning of error traps
+'----------------------------------------------------------------------------
+'   Arrive here if the config file is bad or missing.  This particular error
+'   trap will run the configuration utility.
+
+BadConfig:
+	CLOSE
+	CLS
+	Cputs "MRDES configuration file not found or defective.", 10
+	Junk$ = Get1Key$(CHR$(13), "Press ENTER to correct configuration file.")
+  
+'   I don't know if it's really necessary, but keep the stack nice and neat.
+
+	RESUME Config
+
+'   Execute the configuration utility
+
+Config:
+	RUN "MRSCFG"
+
+'----------------------------------------------------------------------------
+'   Arrive here if the path file is missing or bad.  Since MRDES II relys on
+'   its path information for operation, there's no way to continue if it's not
+'   available.
+
+WhereFile:
+	CLS
+	Cputs "Path file missing or bad.", 10
+	Cputs "MRDES II cannot run without it.", 15
+	Cputs "Contact your supervisor.", 20
+	SYSTEM
+
+'   Repair list doesn't exist.  No big deal, just set the flag not to check
+'   it, and return.
+
+NoRepLst:
+	RepList% = 0
+	RESUME WeChecked
+
+'----------------------------------------------------------------------------
+'   Network Problems.  Basically, what this system does in repsonse to a
+'   network, or any error, for that matter, error is wait 10 seconds, then
+'   retry the failing request.  This system isn't perfect, but works well
+'   enough I may not change it for full network compliance.  If the DEBUG
+'   environment variable is set to "YES", the system error number is
+'   presented on the status line.  In any case, pressing the escape key will
+'   return to the main menu.
+
+NetProblem:
+   
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+   
+	ELSE
+	   
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+   
+	END IF
+	IF Junk$ = CHR$(27) THEN
+		RESUME Menu
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of MRDES.BAS main module
+'****************************************************************************
+
+REM $STATIC
+'****************************************************************************
+'   Checks serial number from data file against list in ProcName$().  If it's
+'   one of ours, returns a zero.  If not, returns a one.
+'============================================================================
+FUNCTION CheckSerial% (Serial$, Align$, ProcName$(), ProcName%)
+'----------------------------------------------------------------------------
+   
+	SHARED EditRec%
+
+'   Set flag to indicate serial number not found
+
+	Flag% = 0
+  
+'   Check all serial numbers in list.
+
+	FOR x% = 1 TO ProcName%
+		Work$ = ProcName$(x%)
+	  
+'   Format list entry same as incoming serial number.  Just use incoming
+'   serial number length, since it's already Vlen%(2) characters long.
+
+		SELECT CASE LTRIM$(RTRIM$(UCASE$(Align$)))
+			CASE "L0"
+				WHILE LEFT$(Work$, 1) = "0" AND LEN(Work$) > 1
+					Work$ = MID$(Work$, 2)
+				WEND
+			CASE "R"
+				Work$ = RIGHT$(SPACE$(LEN(Serial$)) + Work$, LEN(Serial$))
+			CASE "R0"
+				Work$ = RIGHT$(STRING$(LEN(Serial$), "0") + Work$, LEN(Serial$))
+		END SELECT
+	  
+'   If they're the same, keep track of which one it is.  Trim leading/trailing
+'   spaces from data file serial number.
+
+		IF LTRIM$(RTRIM$(Serial$)) = Work$ THEN
+			Flag% = x%
+		END IF
+	NEXT
+
+'   If Flag% still equals zero, it's not in our list.
+
+	IF Flag% = 0 THEN
+		CheckSerial% = 1
+		EXIT FUNCTION
+	END IF
+
+'   To keep it simple, just edit any record in the file with that
+'   serial number.
+
+'   Report we found it.
+
+	CheckSerial% = 0
+
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks repair list presence/contents.  Sets flag.
+'============================================================================
+SUB ChkRepairList
+'----------------------------------------------------------------------------
+   
+	SHARED RepList%, Divs%, Divs$()
+
+	RepList% = 1
+  
+	DataFile% = FREEFILE
+	OPEN "repairs.asc" FOR INPUT AS #DataFile%
+	Work$ = UCASE$(INPUT$(2, #DataFile%))
+	CLOSE #DataFile%
+  
+	IF Work$ = "NO" THEN
+		RepList% = 0
+	END IF
+
+'   Read in the Division information
+
+	IF RepList% = 1 THEN
+		DataFile% = FREEFILE
+		OPEN "DIVS" FOR INPUT AS #DataFile%
+		INPUT #DataFile%, Divs%
+		FOR Pointer% = 1 TO Divs%
+			INPUT #DataFile%, Divs$(Pointer%, 0), Divs$(Pointer%, 1)
+		NEXT
+		CLOSE #DataFile%
+	END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Completes setup upon entry to individual field.
+'============================================================================
+SUB FieldEntry
+'----------------------------------------------------------------------------
+'   Borrow needed information from the main module.
+
+	SHARED Cfg%(), DataLoc%, Eflag%(), Estring$(), Ptr%, Vcol%(), Vline%()
+
+	ErrorString Cfg%(0), Cfg%(1), Cfg%(2), Cfg%(3), Eflag%(Ptr%), Estring$(Ptr%)
+	DataLoc% = 1
+	LOCATE Vline%(Ptr%), Vcol%(Ptr%), 1, CsrTop%, CsrBot%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Presents operator with type choices for a given Mfr/Code combination.
+'   Operator then inputs the correct code for the particular meter
+'============================================================================
+FUNCTION GetChoice%
+'----------------------------------------------------------------------------
+	SHARED Cfg%()
+
+	SCREEN , , 1, 1
+	COLOR Cfg%(0), Cfg%(1)
+	CLS
+	FOR x% = 6 TO 16
+		SELECT CASE x%
+			CASE 6
+				Cputs "ÉÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»", x%
+			CASE 8, 10
+				Cputs "ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶", x%
+			CASE 16
+				Cputs "ÈÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼", x%
+			CASE ELSE
+				Cputs "º                                         º", x%
+		END SELECT
+	NEXT
+	COLOR Cfg%(2), Cfg%(3)
+	Cputs "More than one purc code possible", 7
+	Cputs "Code - " + Lookup.Code + "           Mfr - " + Lookup.Mfr, 9
+	Cputs "Select correct type from the list below", 11
+	Cputs "1 - " + Lookup.Type1, 12
+	Cputs "2 - " + Lookup.Type2, 13
+	Acc$ = "12"
+	IF Lookup.Ambg = "3" THEN
+		Cputs "3 - " + Lookup.Type3, 14
+		Acc$ = "123"
+	END IF
+	x$ = Get1Key$(Acc$, "")
+	x% = INSTR(Acc$, x$)
+	GetChoice% = x%
+	COLOR Cfg%(0), Cfg%(1)
+	CLS
+	SCREEN , , 0, 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Check Lookup entry for purchase code.  Prompt operator if there's more
+'   than one purchase code possible for a given code/mfr combination and get
+'   correct entry.
+'============================================================================
+FUNCTION GetPurcCode$
+'----------------------------------------------------------------------------
+	SELECT CASE Lookup.Ambg
+		CASE "N"
+			GetPurcCode$ = Lookup.Choice1
+		CASE ELSE
+			Choice% = GetChoice%
+			SELECT CASE Choice%
+				CASE 1
+					GetPurcCode$ = Lookup.Choice1
+				CASE 2
+					GetPurcCode$ = Lookup.Choice2
+				CASE 3
+					GetPurcCode$ = Lookup.Choice3
+			END SELECT
+	END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Nothing fancy here, just read the accuracy information transfered from
+'   the 5455.
+'============================================================================
+SUB Grab5455Acc (Work$, Look$, Ptrf%, Ptrl%)
+'----------------------------------------------------------------------------
+	SHARED Value$(), Vlen%()
+	x% = INSTR(Work$, Look$) + 7            ' Find the parameter
+	x$ = ProcRFLAcc$(Work$, x%)             ' Grab it
+	Value$(Ptrf%) = LEFT$(x$ + SPACE$(Vlen%(Ptrf%)), Vlen%(Ptrf%))
+	x% = x% + 24                            ' Bump to as left
+	x$ = ProcRFLAcc$(Work$, x%)
+	Value$(Ptrl%) = LEFT$(x$ + SPACE$(Vlen%(Ptrl%)), Vlen%(Ptrl%))
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Converts an accuracy passed as a formatted string to a string
+'   representation of the accuracy with a decimal point and no more than Dec%
+'   digits after the decimal point.  Returned string is Tlen% characters long.
+'============================================================================
+FUNCTION Grab5800Acc$ (Source$, Dec%, Tlen%)
+'----------------------------------------------------------------------------
+  
+'   Convert to numeric, divide by 100
+
+	Work = VAL(Source$) / 100
+ 
+'   Round to two dec places... Or so it might seem...
+
+	Work = (INT(Work * 100 + .5)) / 100
+  
+'   Back to string value
+
+	Work$ = LTRIM$(STR$(Work))
+  
+'   Make sure there's no more than Dec% digits to the right of the dp.
+
+	IF INSTR(Work$, ".") > 0 THEN
+		WHILE LEN(Work$) > INSTR(Work$, ".") + Dec%
+			Work$ = LEFT$(Work$, LEN(Work$) - 1)
+		WEND
+	ELSE
+		Work$ = Work$ + ".00"
+	END IF
+
+	WHILE LEN(Work$) < INSTR(Work$, ".") + 2
+		Work$ = Work$ + "0"
+	WEND
+
+'   Return the value
+	  
+	IF Work = 0 THEN
+		Grab5800Acc$ = SPACE$(Tlen%)
+	ELSE
+		Grab5800Acc$ = LEFT$(Work$ + SPACE$(Tlen%), Tlen%)
+	END IF
+
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   If no data file is found, this subprogram will initialize one.
+'============================================================================
+SUB InitFile
+'----------------------------------------------------------------------------
+	SHARED DataPath$, Signature$
+
+	Df% = FREEFILE
+	OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #Df% LEN = LEN(DataRec)
+  
+	Info.NumberOfRecords = 0
+	Info.ProcessFlag = "U"
+	Info.InitDate = DATE$
+	Info.Signature = Signature$
+
+	PUT #Df%, 1, Info
+	CLOSE
+	CLS
+	Cputs "No records in this file", 10
+	x$ = Get1Key$(CHR$(13), "Press ENTER to return to the menu.")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks series as left fields.  Returns number of non-blank fields.
+'============================================================================
+FUNCTION LeftAsFound% (Eflag%(), Estring$(), OffSet%, Value$(), Vlen%())
+'----------------------------------------------------------------------------
+	Counter% = 0
+	FOR x% = 0 TO 2
+		IF LTRIM$(RTRIM$(Value$(OffSet% + 1 + (x% * 8)))) <> "" THEN
+			Counter% = Counter% + 1
+		END IF
+	NEXT
+	LeftAsFound% = Counter%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Load the screen arrays.  This subroutine opens the selected screen file,
+'   then reads in all information necessary to process that screen.
+'============================================================================
+SUB LoadScrn
+'----------------------------------------------------------------------------
+
+'   Borrow what we need from the main module.
+
+	SHARED Align$(), Area1%, Area2%, Bwd%(), DateLoc%, Default$(), Eflag%()
+	SHARED Estring$(), Fwd%(), Help$(), NonSpc%(), Pcol%(), Pline%()
+	SHARED Prompt$(), Prompt%, RecPos%(), Rinit%(), Scn$(), ScnPath$, Sel%
+	SHARED Sfl%, Title$, Value%, Vcol%(), Vlen%(), Vline%()
+   
+	ScnPth% = FREEFILE
+	OPEN ScnPath$ + Scn$(Sel%) + ".SCN" FOR INPUT AS #ScnPth%
+
+'   Number of screen prompts and screen title
+
+	INPUT #ScnPth%, Prompt%, Title$
+
+'   Get the prompt information
+
+	FOR x% = 1 TO Prompt%
+		INPUT #ScnPth%, Pline%(x%), Pcol%(x%), Prompt$(x%)
+	NEXT
+
+'   Number of data fields
+
+	INPUT #ScnPth%, Value%
+
+'   Screen information for data fields.  Junk$ is the programmer's note in the
+'   file line for that entry.  Mds$, MdsLoc% and MdsLen% are items in the file
+'   for the use of INTRFACE when generating the interface record for transfer
+'   to MDS.
+
+	FOR x% = 1 TO Value%
+		INPUT #ScnPth%, Vline%(x%), Vcol%(x%), Vlen%(x%)
+		INPUT #ScnPth%, Fwd%(x%), Bwd%(x%), Help$(x%)
+		INPUT #ScnPth%, RecPos%(x%), Rinit%(x%), NonSpc%(x%)
+		INPUT #ScnPth%, Default$(x%), Align$(x%), Junk$
+		INPUT #ScnPth%, Mds$, MdsLoc%, MdsLen%
+	
+'   Force align$ to upper case
+
+		Align$(x%) = UCASE$(Align$(x%))
+
+'   Set error flags and strings to zero/null.
+
+		Eflag%(x%) = 0
+		Estring$(x%) = ""
+	NEXT
+
+'   Series full load as found and date field pointers and time stamp flag.
+
+	INPUT #ScnPth%, Sfl%, DateLoc%, TimeStamp%
+  
+'   Set date default
+   
+	Default$(DateLoc%) = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+   
+'   Area codes for division check
+
+	INPUT #ScnPth%, Area1%, Area2%
+
+	CLOSE #ScnPth%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Load the data buffer and write it to the disk.  If we get here, the data
+'   has been checked, the checks have passed and the operator says write it to
+'   disk.  Do so, updating pointers, etc, as necessary.  If we're in entry
+'   mode, the data will be appended to the file and the number of records in
+'   the file in the information record will be updated, if in edit mode, it
+'   will be returned to the same location in the file.  The file's last edit
+'   date will be set to the current date in either case.
+'============================================================================
+SUB LoadWrite
+'----------------------------------------------------------------------------
+
+	SHARED DataPath$, EditRec%, LastMeter$, Sel%, TimeStamp$, TimeStamp%
+	SHARED RecPos%(), Value$(), Value%, Vlen%()
+   
+	LastMeter$ = "Meter " + Value$(1) + " -- " + Value$(2) + " written to disk."
+	DataFile% = FREEFILE
+	OPEN DataPath$ + "MRDES.DAT" FOR RANDOM AS #DataFile% LEN = LEN(DataRec)
+ 
+'   We'll keep track of when file was initialized, when it was last added
+'   to/edited and when it was processed.
+
+	GET #DataFile%, 1, Info
+
+'   If the file doesn't exist at this time, initialize it.
+
+	IF Info.NumberOfRecords = 0 THEN
+		Info.InitDate = DATE$
+		Info.ProcessFlag = "U"
+	END IF
+  
+	PUT #DataFile%, 1, Info
+	NumRec% = Info.NumberOfRecords
+
+'   File overhead taken care of.  Put the data into the buffer.
+
+	Work$ = SPACE$(500)
+ 
+'   Identify the record type.
+
+	MID$(Work$, 1, 1) = LTRIM$(RTRIM$(STR$(Sel%)))
+  
+'   Now add the data.
+
+	FOR x% = 1 TO Value%
+		MID$(Work$, RecPos%(x%), Vlen%(x%)) = Value$(x%)
+	NEXT
+ 
+'   Check and insert time stamp information if necessary
+
+	IF TimeStamp% > 0 THEN
+		IF EditRec% = 0 OR (EditRec% > 0 AND TimeStamp% = 1) THEN
+			MID$(Work$, 485, 16) = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4) + TIME$
+		END IF
+		IF EditRec% > 0 AND TimeStamp% = 2 THEN
+			MID$(Work$, 485, 16) = TimeStamp$
+		END IF
+	END IF
+ 
+'   Put the information in the buffer
+
+	DataRec.Work = Work$
+ 
+'   If we're adding, append the data to the current file.  If we're editing,
+'   put the data back where it came from.
+
+	IF EditRec% = 0 THEN
+		NumRec% = NumRec% + 1
+	ELSE
+		NumRec% = EditRec%
+	END IF
+ 
+'   In any case, put it in the file.
+
+	PUT #DataFile%, NumRec% + 1, DataRec
+ 
+'   Clean up and update the information record.
+
+	GET #DataFile%, 1, Info
+ 
+'   Update last edit date.
+
+	Info.EditDate = DATE$
+	IF EditRec% = 0 THEN
+		Info.NumberOfRecords = NumRec%
+	END IF
+	PUT #DataFile%, 1, Info
+	CLOSE #DataFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parses data from input buffer into working array.
+'============================================================================
+SUB ParseData (Fields%, Value$(), Buffer$, Position%(), LengTh%(), TimeStamp$)
+'----------------------------------------------------------------------------
+	FOR Counter% = 1 TO Fields%
+		Value$(Counter%) = MID$(Buffer$, Position%(Counter%), LengTh%(Counter%))
+	NEXT
+	TimeStamp$ = MID$(Buffer$, 485, 16)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prepares string for directory of records on disk function.  When string is
+'   ready, calls print routine.
+'============================================================================
+SUB ParseIndex
+'----------------------------------------------------------------------------
+
+'   Borrow some information from the main program
+
+	SHARED Company$, Sel%, ToPrt%, Value$(), Vlen%(), Work$
+   
+	Index$ = Work$ + SPACE$(55)
+		 
+'   Get code, serial number, area into string
+'   Code is always array element 1.
+
+	MID$(Index$, 15, Vlen%(1)) = Value$(1)
+   
+	SELECT CASE Sel%
+
+'   Put into the string as follows:
+'   Position 7 - Record type identifer
+'   Position 20 - Device code
+'   Position 28 - Serial number
+'   Position 40 - Mfr code
+'   Position 56 - Area
+
+		CASE 1
+			MID$(Index$, 7, 4) = "TEST"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(5)) = Value$(5)
+			MID$(Index$, 51, Vlen%(3)) = Value$(3)
+
+		CASE 2
+			MID$(Index$, 7, 9) = "TEST/HIST"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(5)) = Value$(5)
+			MID$(Index$, 51, Vlen%(3)) = Value$(3)
+
+		CASE 3
+			MID$(Index$, 7, 9) = "INVENTORY"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(4)) = Value$(4)
+			MID$(Index$, 51, Vlen%(3)) = Value$(3)
+			   
+		CASE 4
+			MID$(Index$, 7, 7) = "HISTORY"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(5)) = Value$(5)
+			MID$(Index$, 51, Vlen%(3)) = Value$(3)
+			  
+		CASE 5
+			MID$(Index$, 7, 8) = "TRANSFER"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(5)) = Value$(5)
+			MID$(Index$, 51, Vlen%(3)) = Value$(3)
+
+		CASE 6
+			MID$(Index$, 7, 8) = "STAT CHG"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(5)) = Value$(5)
+			MID$(Index$, 51, Vlen%(3)) = Value$(3)
+
+		CASE 7
+			MID$(Index$, 7, 8) = "BATT CHK"
+			MID$(Index$, 23, Vlen%(2)) = Value$(2)
+			MID$(Index$, 40, Vlen%(3)) = Value$(3)
+			MID$(Index$, 51, Vlen%(5)) = Value$(5)
+				  
+	END SELECT              ' Record type
+
+	PrintIndex Index$, ToPrt%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints MRDES II diagnostic information
+'============================================================================
+SUB PrintDiag
+'----------------------------------------------------------------------------
+   
+	SHARED AutoTran%, Cfg%(), ChkPath$, CsrBot%, CsrTop%, DataPath$
+	SHARED HelpPath$, Scn$(), ScnPath$
+  
+	SCREEN , , 1, 1
+	CLS
+	COLOR 15, 0
+	Cputs "MRDES II Diagnostic Information", 1
+	FOR Counter% = 2 TO 11
+		Cputs "³", Counter%
+	NEXT
+	Cputs STRING$(78, "Ä"), 12
+	IF Cfg%(5) > 0 THEN
+		IF AutoTran% = 0 THEN
+			PutXY 3, 2, "Automatic data transfer OFF"
+		ELSE
+			PutXY 3, 2, "Automatic data transfer ON"
+		END IF
+	END IF
+	PutXY 4, 2, "Cursor top line:" + STR$(CsrTop%)
+	PutXY 5, 2, "Cursor bottom line:" + STR$(CsrBot%)
+	COLOR Cfg%(0), Cfg%(1)
+	PutXY 6, 2, "Screen message color"
+	COLOR Cfg%(2), Cfg%(3)
+	PutXY 7, 2, "Data entry/edit field color"
+	COLOR 15, 0
+	IF Cfg%(4) = 0 THEN
+		PutXY 10, 2, "No printer"
+	ELSE
+		PutXY 10, 2, "Printer"
+	END IF
+	SELECT CASE Cfg%(5)
+		CASE 0
+			PutXY 11, 2, "No auto data transfer"
+		CASE 1
+			PutXY 11, 2, "RFL 5455 data transfer"
+		CASE 2
+			PutXY 11, 2, "Knopp ST-31 data transfer"
+		CASE 3
+			PutXY 11, 2, "Barcode scanner data transfer"
+		CASE 4
+			PutXY 11, 2, "RFL 5800 data transfer"
+	END SELECT
+  
+	PutXY 3, 45, "MRDES II " + Version$
+   
+	PutXY 4, 50, "Screen filenames"
+	FOR Counter% = 1 TO 7
+		PutXY Counter% + 4, 42, Scn$(Counter%)
+	NEXT
+   
+	IF Mds2% = 0 THEN
+		PutXY 13, 10, "Running in MDS 1 mode"
+	ELSE
+		PutXY 13, 10, "Running in MDS 2 mode"
+	END IF
+	IF Net% = 0 THEN
+		PutXY 14, 10, "Running in stand alone mode"
+	ELSE
+		PutXY 14, 10, "Running in network mode"
+	END IF
+	PutXY 15, 11, "Check file path: " + ChkPath$
+	PutXY 16, 12, "Data file path: " + DataPath$
+	PutXY 17, 12, "Help file path: " + HelpPath$
+	PutXY 18, 10, "Screen file path: " + ScnPath$
+	Cputs "Stack space available" + STR$(FRE(-2)) + " Memory available" + STR$(FRE(1)), 20
+	MDate$ = Mayan$
+	MDate$ = MID$(MDate$, INSTR(MDate$, ":") + 1)
+	Cputs "System date:" + DATE$ + ":" + LTRIM$(RTRIM$(STR$(Julian&))) + ":" + LTRIM$(MDate$), 22
+	Cputs "System time:" + TIME$, 23
+   
+	Junk$ = Get1Key$(CHR$(13) + CHR$(27) + CHR$(32), "Press Enter to exit")
+	SCREEN , , 0, 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints an index record line passed in Index$ on screen or paper as
+'   directed by ToPrt%
+'============================================================================
+SUB PrintIndex (Index$, ToPrt%)
+'----------------------------------------------------------------------------
+	IF ToPrt% = 0 THEN
+		PRINT TAB(6); Index$
+	ELSE
+		LPRINT TAB(6); Index$
+	END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints menu, gets operator input.
+'============================================================================
+FUNCTION PrintMenu$
+'----------------------------------------------------------------------------
+
+'   Borrow what we need from the main module
+   
+	SHARED AutoTran%, Bbg%, Bfg%, Cfg%(), Header$, Hold%, Lab$
+	SHARED Office%, RepList%, DataPath$
+   
+	COLOR Cfg%(0), Cfg%(1)
+	CLS
+ 
+'   Draw a box to enclose menu and options so the screen stays neat.
+
+	DrawMenuBox 1, 24, 6, 0, 78
+ 
+	COLOR Bfg%, Bbg%
+  
+	Cputs Header$, 2
+	Cputs Lab$, 3
+
+	Cputs "Meter Record Data Entry System", 4
+	Cputs "Main Menu", 5
+
+'   This will be removed eventually
+
+	IF Mds2% = 1 THEN
+		Cputs "MRDES II operating in MDS 2 mode", 7
+	END IF
+
+	COLOR Cfg%(0), Cfg%(1)
+	PutXY 8, 4, "1 - Test Record"
+
+'   If the system is defined as being the office system, allow all options
+
+	IF Office% = 1 THEN
+		PutXY 8, 47, "2 - Test/History Record (New)"
+		PutXY 10, 4, "3 - Physical Inventory Record"
+		PutXY 10, 47, "4 - History Record"
+		PutXY 12, 4, "5 - Transfer Record"
+		PutXY 12, 47, "6 - Status Change Record"
+		PutXY 14, 4, "7 - Battery Check Year Record"
+		PutXY 18, 47, "S - Swap work file"
+	END IF
+   
+	PutXY 16, 4, "E - Edit records"
+
+	IF Cfg%(5) = 3 THEN
+		PutXY 17, 4, "B - Edit Records select w/Barcode"
+	END IF
+  
+'   List records
+
+	PutXY 16, 25, "L - List records"
+
+'   List file record index.
+
+	PutXY 16, 47, "D - Directory of records"
+ 
+'   Peruse the repair list file
+
+	IF RepList% = 1 THEN
+		PutXY 18, 4, "0 - Search/List Tracking List File"
+	END IF
+
+'   System general help file.
+
+	PutXY 14, 47, "H - Help!"
+ 
+'   Toggle automatic data transfer on/off
+
+	IF Cfg%(5) > 0 THEN
+		PutXY 20, 4, "A - Automatic data transfer:"
+		IF AutoTran% = 0 THEN
+			PRINT "(Off)"
+		ELSE
+			PRINT MID$("Rfl 5455Knopp   Barcode Rfl 5800", (Cfg%(5) - 1) * 8 + 1, 8)
+		END IF
+	END IF
+
+'   Configures MRDES II for the equipment, preferences, etc.
+
+	PutXY 22, 17, "C - Configure MRDES II"
+ 
+'   Exit is highlighted, if bold colors are selected.
+
+	COLOR Bfg%, Bbg%
+	PutXY 22, 4, "X - Exit"
+
+	COLOR Cfg%(0), Cfg%(1)
+
+	IF Office% = 1 THEN
+		PutXY 19, 47, "Processing "
+		IF Hold% = 0 THEN
+			PRINT "Incoming";
+		ELSE
+			PRINT "Process";
+		END IF
+		PRINT " file"
+	   
+		PutXY 21, 47, "R - Toggle check on/off"
+	   
+		PutXY 22, 47, "Repair list cross-check (" + MID$("OffON ", RepList% * 3 + 1, 3) + ")"
+	END IF
+
+	PutXY 2, 77 - LEN(Version$), Version$
+
+'   Get operator option selection
+
+'   If it's the office work station, allow everything.  If not, only allow
+'   test record related options.  Edit, listing and directory options are
+'   allowed for any record type.
+
+	IF Office% = 1 THEN
+		Ok$ = CHR$(27) + "1234567CDEHLRSX"
+	ELSE
+		Ok$ = CHR$(27) + "1CDEHLRSX"
+	END IF
+   
+'   Debug mode?
+   
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+		Ok$ = Ok$ + "="
+	END IF
+   
+	IF RepList% = 1 THEN
+		Ok$ = Ok$ + "0"
+	END IF
+
+'   Automatic data transfer?
+
+	IF Cfg%(5) > 0 THEN
+		Ok$ = Ok$ + "A"
+		IF Cfg%(5) = 3 THEN
+			Ok$ = Ok$ + "B"
+		END IF
+	END IF
+ 
+	DO
+		DO
+			PutXY 5, 3, DATE$
+			LOCATE 5, 69, 0
+			PRINT TIME$;
+			Day$ = DayOfWeek$(DATE$)
+			LOCATE 2, 3, 0
+			PRINT Day$;
+			Sel$ = UCASE$(INKEY$)
+		LOOP WHILE Sel$ = ""
+	LOOP UNTIL INSTR(Ok$, Sel$) > 0
+	LOCATE , , 0
+	PrintMenu$ = Sel$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Doesn't do any processing, just clears the screen and prints the data
+'   entry/edit screen as defined by the various arrays in residence.
+'============================================================================
+SUB PrintScreen
+'----------------------------------------------------------------------------
+
+'   Borrow just about everything from the main module
+
+	SHARED Bbg%, Bfg%, Cfg%(), Pcol%(), Pline%(), Prompt$(), Prompt%, Title$
+	SHARED Value$(), Value%, Vline%(), Vcol%()
+
+'   Clear the screen, center and print the title
+
+	COLOR Bfg%, Bbg%
+	CLS
+	Cputs Title$, 1
+
+'   Set screen color for prompts, print prompts
+
+	COLOR Cfg%(0), Cfg%(1)
+	PutXY 24, 1, SPACE$(79)
+  
+	FOR x% = 1 TO Prompt%
+		PutXY Pline%(x%), Pcol%(x%), Prompt$(x%)
+	NEXT
+
+'   Set screen color for data items, print data items
+
+	COLOR Cfg%(2), Cfg%(3)
+	FOR x% = 1 TO Value%
+		PutXY Vline%(x%), Vcol%(x%), Value$(x%)
+	NEXT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Procedure for purchase code lookup.
+'   This procedure should be considered for relocation to MRDESSUB.
+'   The only consideration would be passing the data type Lookup on the
+'   calling line.
+'============================================================================
+FUNCTION Purchase$ (Target$, Vlen%)
+'----------------------------------------------------------------------------
+	Purc% = FREEFILE
+	OPEN "PURCHASE" FOR RANDOM AS #Purc% LEN = LEN(Lookup)
+	Low% = 1
+	High% = LOF(Purc%) \ LEN(Lookup)
+	Counter% = 0
+	WHILE Target$ > Test$ AND Counter% <= High%
+		Counter% = Counter% + 1
+		GET #Purc%, Counter%, Lookup
+		Test$ = Lookup.Mfr + Lookup.Code
+	WEND
+	CLOSE #Purc%
+	IF Target$ <> Test$ THEN
+		Purchase$ = SPACE$(Vlen%)
+	ELSE
+		Purchase$ = GetPurcCode
+	END IF
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Reads information from DATAFILE
+'============================================================================
+SUB ReadDataFile
+'----------------------------------------------------------------------------
+	SHARED ChkPath$, Company$, DataPath$, Header$, HelpPath$, Lab$
+	SHARED ProcPath$, Scn$(), ScnPath$
+	
+'   Now read the screen file
+  
+	DataFile% = FREEFILE
+	OPEN "DataFile" FOR INPUT AS #DataFile%
+
+'   Read menu header information from file
+
+	LINE INPUT #DataFile%, Header$
+	LINE INPUT #DataFile%, Lab$
+
+'   Read in path strings.  This method keeps MRDES II as flexible
+'   as possible in all ways.
+
+	LINE INPUT #DataFile%, ScnPath$         ' Screen file path
+	ScnPath$ = LTRIM$(RTRIM$(ScnPath$))
+	IF RIGHT$(ScnPath$, 1) <> "\" THEN
+		CheckPath ScnPath$
+	END IF
+	LINE INPUT #DataFile%, ChkPath$         ' Check file path
+	ChkPath$ = LTRIM$(RTRIM$(ChkPath$))
+	IF RIGHT$(ChkPath$, 1) <> "\" THEN
+		CheckPath ChkPath$
+	END IF
+	LINE INPUT #DataFile%, DataPath$        ' Data file path
+	DataPath$ = LTRIM$(RTRIM$(DataPath$))
+	IF RIGHT$(DataPath$, 1) <> "\" THEN
+		CheckPath DataPath$
+	END IF
+	LINE INPUT #DataFile%, HelpPath$        ' Help screen file path
+	HelpPath$ = LTRIM$(RTRIM$(HelpPath$))
+	IF RIGHT$(HelpPath$, 1) <> "\" THEN
+		CheckPath HelpPath$
+	END IF
+	LINE INPUT #DataFile%, ProcPath$        ' Process data file path
+	ProcPath$ = LTRIM$(RTRIM$(ProcPath$))
+	IF RIGHT$(ProcPath$, 1) <> "\" THEN
+		CheckPath ProcPath$
+	END IF
+
+'   Read the screen file names.  These names are combined with the screen
+'   pathname and the extension ".SCN" to get the screen definition files,
+'   and with the check pathname and several extensions to get the check
+'   file names.
+
+	FOR Pointer% = 1 TO 7
+		LINE INPUT #DataFile%, Scn$(Pointer%)
+		Scn$(Pointer%) = LTRIM$(RTRIM$(Scn$(Pointer%)))
+	NEXT
+  
+'   Read in the company name.
+
+	LINE INPUT #DataFile%, Company$
+	Company$ = LTRIM$(RTRIM$(Company$))
+
+   
+'   Read and set MDS 2 flag
+
+	LINE INPUT #DataFile%, Work$
+	IF UCASE$(LEFT$(LTRIM$(Work$), 4)) = "MDS2" THEN
+		Mds2% = 1
+	ELSE
+		Mds2% = 0
+	END IF
+   
+'   Get the net/nonet flag
+
+	LINE INPUT #DataFile%, Work$
+	IF UCASE$(LTRIM$(RTRIM$(Work$))) = "NET" THEN
+		Net% = 1
+	ELSE
+		Net% = 0
+	END IF
+	CLOSE #DataFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Reinitialize subprogram.  Reinit data array as directed by the following:
+'       Rinit%(x%)=0 - Do not reinitialize element
+'       Rinit%(x%)=1 - Reinitialize element to spaces
+'       Rinit%(x%)=2 - Reinitialize element to supplied data
+'   Date field is always reinitialized.
+'============================================================================
+SUB ReInit
+'----------------------------------------------------------------------------
+
+'   Need to borrow some information from main module
+
+	SHARED DateLoc%, Default$(), Eflag%(), Estring$(), Rinit%(), Sel%
+	SHARED Value$(), Value%, Vlen%()
+
+	FOR x% = 1 TO Value%
+		SELECT CASE Rinit%(x%)
+			CASE 1
+				Value$(x%) = SPACE$(Vlen%(x%))
+			CASE 2
+				Value$(x%) = LEFT$(Default$(x%) + SPACE$(Vlen%(x%)), Vlen%(x%))
+		END SELECT
+		Eflag%(x%) = 0
+		Estring$(x%) = ""
+	NEXT
+ 
+'   Get date from system and format for MDS.
+
+	IF DateLoc% > 0 AND Sel% < 3 THEN
+		Value$(DateLoc%) = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+	END IF
+	TimeStamp$ = SPACE$(16)
+'****************************************************************************
+END SUB
+

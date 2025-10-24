@@ -1,0 +1,22 @@
+DECLARE FUNCTION Julian& (DT$)
+LINE INPUT "Date - ISO formst "; DT$
+PRINT Julian&(DT$)
+
+'****************************************************************************
+'   Calculates Julian day number from computer calendar.
+'============================================================================
+FUNCTION Julian& (DT$)
+'----------------------------------------------------------------------------
+    Year = VAL(LEFT$(DT$, 4))
+    Month = VAL(MID$(DT$, 6, 2))
+    Day = VAL(MID$(DT$, 9, 2))
+    IF Month < 3 THEN
+        Month = Month + 13
+        Year = Year - 1
+    ELSE
+        Month = Month + 1
+    END IF
+    Julian& = INT(365.25 * Year) + INT(30.6001 * Month) + Day + 1720982
+'****************************************************************************
+END FUNCTION
+

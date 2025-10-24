@@ -1,0 +1,548 @@
+'   $TITLE: 'CONIO - MRDES II/TRDES Console I/O Procedures'
+'   Version 5.00
+'   K. W. Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'       (Nothing in the past year)
+'============================================================================
+'   Define Record Types
+'----------------------------------------------------------------------------
+   TYPE FileFindBuf                   'DTA Buffer
+	  DOS            AS STRING * 19   'first 20 bytes reserved
+	  CreateTime     AS STRING * 1    'by DOS
+	  Attributes     AS INTEGER       'Attribute of file
+	  AccessTime     AS INTEGER       'Last access time of file
+	  AccessDate     AS INTEGER       'Last access date of file
+	  FileSize       AS LONG          'Size of file in bytes
+	  FileName       AS STRING * 13   'File name XXXXXXXX.XXX
+   END TYPE
+'----------------------------------------------------------------------------
+'   Define the type needed for INTERRUPT
+'   This one does not handle the segment registers.
+	TYPE RegType
+		Ax    AS INTEGER
+		Bx    AS INTEGER
+		Cx    AS INTEGER
+		Dx    AS INTEGER
+		Bp    AS INTEGER
+		Si    AS INTEGER
+		Di    AS INTEGER
+		Flags AS INTEGER
+	END TYPE
+'----------------------------------------------------------------------------
+   TYPE Register                      'Type for CALL Interrupt
+		Ax    AS INTEGER
+		Bx    AS INTEGER
+		Cx    AS INTEGER
+		Dx    AS INTEGER
+		Bp    AS INTEGER
+		Si    AS INTEGER
+		Di    AS INTEGER
+		Flags AS INTEGER
+		Ds    AS INTEGER
+		es    AS INTEGER
+   END TYPE
+'----------------------------------------------------------------------------
+	TYPE TheFileName
+		FileName AS STRING * 13
+	END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB DoVScreen (First%, Pointer%, Title$, Last%, Row%, Col%, Select$(), Sel%)
+DECLARE FUNCTION ErrorMsg$ (ErrorNumber%)
+DECLARE FUNCTION GetSelection$ (Length%, FileName$, Select$())
+DECLARE FUNCTION GetVSelection$ (Length%, FileName$, Select$())
+DECLARE SUB INTERRUPT (intnum AS INTEGER, InReg AS RegType, OutReg AS RegType)
+DECLARE SUB INTERRUPTX (intnum AS INTEGER, InReg AS Register, OutReg AS Register)
+DECLARE SUB LoadLookupFile (FileName$, Sel%, Select$(), Title$)
+DECLARE SUB MoveFieldPointer (Ptr%, Work%(), Vline%())
+DECLARE FUNCTION ParseCmdLine% (Argv$())
+DECLARE SUB PrintaSel (Row%, Col%, Pointer%, Item$)
+'============================================================================
+	Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+
+'****************************************************************************
+'   Centers Message$ on screen line Row%.  Leaves cursor on screen line Row%.
+'============================================================================
+SUB Cputs (Message$, Row%)
+'----------------------------------------------------------------------------
+	PutXY Row%, (80 - LEN(Message$)) \ 2, Message$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Explains MDS date format
+'============================================================================
+SUB DateFormat
+'----------------------------------------------------------------------------
+	Cputs "MDS Date Format", CSRLIN + 1
+	Column% = 10
+	PutXY CSRLIN + 2, Column%, "ÚÂÄÄÄÄÄÄÄÄ Month - leading zero if necessary"
+	PutXY CSRLIN + 1, Column%, "³³  ÚÂÂÂÄÄ 4 digit year"
+	PutXY CSRLIN + 1, Column%, "  "
+	PutXY CSRLIN + 1, Column%, "MMDDYYYY"
+	PutXY CSRLIN + 1, Column%, "  "
+	PutXY CSRLIN + 1, Column%, "  ÀÁÄÄÄÄÄÄ Day - leading zero if necessary"
+	PRINT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Inits Vselect Screen
+'============================================================================
+SUB DoVScreen (First%, Pointer%, Title$, Last%, Row%, Col%, Select$(), Sel%)
+'----------------------------------------------------------------------------
+	Pointer% = First%
+	CLS
+	Cputs Title$, 1
+	FOR x% = First% TO Last%
+		IF x% = Pointer% THEN
+			COLOR 15, 0
+		ELSE
+			COLOR 7, 0
+		END IF
+		PutXY Row% + x% - First% + 1, Col%, Select$(x%)
+	NEXT
+	IF Sel% > 20 THEN
+		Cputs "PgUp/PgDn for more selections", 24
+	END IF
+	Cputs "Up/Down Arrow keys move cursor, Enter Selects, Esc exits", 25
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Draws a menu box on the screen
+'============================================================================
+SUB DrawMenuBox (First%, Last%, a%, b%, Length%)
+'----------------------------------------------------------------------------
+	CLS
+	FOR Counter% = First% TO Last%
+		SELECT CASE Counter%
+			CASE First%
+				Cputs "É" + STRING$(Length% - 2, "Í") + "»", Counter%
+			CASE Last%
+				Cputs "È" + STRING$(Length% - 2, "Í") + "¼", Counter%
+			CASE ELSE
+				IF (a% = 0 AND b% = 0) OR (Counter% <> a% AND Counter% <> b%) THEN
+					Cputs "º" + SPACE$(Length% - 2) + "º", Counter%
+				ELSE
+					IF Counter% = a% OR Counter% = b% THEN
+					Cputs "Ç" + STRING$(Length% - 2, "Ä") + "¶", Counter%
+					END IF
+				END IF
+		END SELECT
+	NEXT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Returns Description of error passed in ErrorNumber%
+'============================================================================
+FUNCTION ErrorMsg$ (ErrorNumber%)
+'----------------------------------------------------------------------------
+	SELECT CASE ErrorNumber%
+		CASE 2
+			ErrorMsg$ = "Syntax error"
+		CASE 3
+			ErrorMsg$ = "RETURN without GOSUB"
+		CASE 52
+			ErrorMsg$ = "Bad file name or number"
+		CASE 53
+			ErrorMsg$ = "File not found"
+		CASE ELSE
+			ErrorMsg$ = "Unknown code" + STR$(ErrorNumber%)
+	END SELECT
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints prompt, if any, on 25th line, gets a keystroke acceptable
+'   according to the information passed in Accept$.  Leaves 25th line clear,
+'   alphabetic input is converted to upper case.
+'============================================================================
+FUNCTION Get1Key$ (Accept$, Prompt$)
+'----------------------------------------------------------------------------
+
+	CsrRow% = CSRLIN
+	CsrCol% = POS(0)
+
+'   Turn the cursor off
+
+	LOCATE , , 0
+	IF Prompt$ <> "" THEN
+		LOCATE 25, 1
+		PRINT SPACE$(79);
+		Cputs Prompt$, 25
+	END IF
+
+	DO
+		x$ = UCASE$(INPUT$(1))
+	LOOP WHILE INSTR(Accept$, x$) = 0
+
+	LOCATE 25, 1
+	PRINT SPACE$(79);
+
+'   Turn the cursor back on
+
+	LOCATE CsrRow%, CsrCol%, 1
+	Get1Key$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Presents selections, gets selection.
+'============================================================================
+FUNCTION GetSelection$ (Length%, FileName$, Select$())
+'----------------------------------------------------------------------------
+	SCREEN , , 1, 1
+	CLS
+	LoadLookupFile FileName$, Sel%, Select$(), Title$
+	Row% = 2                    ' Init cursor location
+	Col% = 4
+	Pointer% = 1
+	FOR x% = 1 TO Sel%
+		Select$(x%) = LEFT$(LTRIM$(Select$(x%)), Length%)
+		IF x% = Pointer% THEN
+			COLOR 15, 0
+		ELSE
+			COLOR 7, 0
+		END IF
+		PrintaSel Row%, Col%, x%, Select$(x%)
+	NEXT
+	Cputs "Arrow keys move cursor, Enter Selects, Esc exits, Tab to input value", 25
+	DO
+		DO
+			x$ = INKEY$
+		LOOP WHILE x$ = ""
+		IF LEN(x$) = 2 THEN
+			x$ = RIGHT$(x$, 1)
+		END IF
+		x% = ASC(x$)
+		SELECT CASE x%
+			CASE 56, 72                 ' Up arrow or 8
+				IF Pointer% > 10 THEN
+					COLOR 7, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+					Pointer% = Pointer% - 10
+					COLOR 15, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+				END IF
+			CASE 50, 80                 ' Down arrow or 2
+				IF Pointer% + 10 <= Sel% THEN
+					COLOR 7, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+					Pointer% = Pointer% + 10
+					COLOR 15, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+				END IF
+			CASE 54, 77                 ' Right arrow or 6
+				IF Pointer% < Sel% THEN
+					COLOR 7, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+					Pointer% = Pointer% + 1
+					COLOR 15, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+				END IF
+			CASE 52, 75                 ' Left arrow or 4
+				IF Pointer% > 1 THEN
+					COLOR 7, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+					Pointer% = Pointer% - 1
+					COLOR 15, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+				END IF
+			CASE 55, 71                 ' Home key or 7
+				IF Pointer% > 1 THEN
+					COLOR 7, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+					Pointer% = 1
+					COLOR 15, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+				END IF
+			CASE 49, 79                 ' End key or 1
+				IF Pointer% < Sel% THEN
+					COLOR 7, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+					Pointer% = Sel%
+					COLOR 15, 0
+					PrintaSel Row%, Col%, Pointer%, Select$(Pointer%)
+				END IF
+			CASE 9, 13, 27
+			CASE ELSE
+				x$ = ""
+		END SELECT                  ' Special key (funct/alt)
+
+	LOOP UNTIL x$ = CHR$(9) OR x$ = CHR$(13) OR x$ = CHR$(27)
+	x% = ASC(x$)
+	SELECT CASE x%
+		CASE 9                          ' Manual input
+			DO
+				CLS
+				Cputs "Input up to" + STR$(Length%) + " characters.", 10
+				Cputs "Any leading zeros will be supplied by the program.", 14
+				LOCATE 17, (80 - Length%) \ 2
+				INPUT Junk$
+				Junk$ = LTRIM$(RTRIM$(Junk$))
+				Work$ = ""
+				FOR c% = 1 TO LEN(Junk$)
+					IF INSTR("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ?", MID$(Junk$, c%, 1)) > 0 THEN
+						Work$ = Work$ + MID$(Junk$, c%, 1)
+					END IF
+				NEXT
+			LOOP UNTIL LEN(Work$) <= Length%
+			Work$ = RIGHT$(STRING$(Length%, "0") + Work$, Length%)
+			GetSelection$ = Work$
+		CASE 13                         ' One of the above
+			GetSelection$ = Select$(Pointer%)
+		CASE 27
+			GetSelection$ = "\"
+	END SELECT
+	SCREEN , , 0, 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Gets one-dimensional selection
+'============================================================================
+FUNCTION GetVSelection$ (Length%, FileName$, Select$())
+'----------------------------------------------------------------------------
+   
+	DIM InRegs AS RegType, OutRegs AS RegType
+
+	SCREEN , , 1, 1
+	CLS
+	LoadLookupFile FileName$, Sel%, Select$(), Title$
+	Row% = 2                ' Init cursor location
+	Col% = 4
+	First% = 1
+	IF Sel% <= 20 THEN
+		Last% = Sel%
+	ELSE
+		Last% = 20
+	END IF
+   
+	DoVScreen First%, Pointer%, Title$, Last%, Row%, Col%, Select$(), Sel%
+
+	DO
+		DO
+			x$ = INKEY$
+		LOOP WHILE x$ = ""
+	   
+		IF LEN(x$) = 2 THEN
+			x$ = RIGHT$(x$, 1)
+		END IF
+		x% = ASC(x$)
+		SELECT CASE x%
+			CASE 56, 72                 ' Up arrow or 8
+				IF Pointer% > First% THEN
+					COLOR 7, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+					Pointer% = Pointer% - 1
+					COLOR 15, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+				END IF
+			CASE 50, 80                 ' Down arrow or 2
+				IF Pointer% < Last% THEN
+					COLOR 7, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+					Pointer% = Pointer% + 1
+					COLOR 15, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+				END IF
+			CASE 55, 71                 ' Home key or 7
+				IF Pointer% > First% THEN
+					COLOR 7, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+					Pointer% = First%
+					COLOR 15, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+				END IF
+			CASE 49, 79                 ' End key or 1
+				IF Pointer% < Last% THEN
+					COLOR 7, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+					Pointer% = Last%
+					COLOR 15, 0
+					PutXY Row% + Pointer% - First% + 1, Col%, Select$(Pointer%)
+				END IF
+			CASE 51, 81                 ' Page down key or 3
+				IF Sel% > 20 THEN
+					Last% = Last% + 20
+					IF Last% > Sel% THEN
+						Last% = Sel%
+					END IF
+					First% = Last% - 19
+					IF First% < 1 THEN
+						First% = 1
+					END IF
+					DoVScreen First%, Pointer%, Title$, Last%, Row%, Col%, Select$(), Sel%
+				END IF
+			CASE 57, 73                 ' Page up key or 9
+				IF Sel% > 20 THEN
+					First% = First% - 20
+					IF First% < 1 THEN
+						First% = 1
+					END IF
+					Last% = First% + 19
+					IF Last% > Sel% THEN
+						Last% = Sel%
+					END IF
+					DoVScreen First%, Pointer%, Title$, Last%, Row%, Col%, Select$(), Sel%
+				END IF
+			CASE 13, 27
+'                   (Dummy selection to avoid else clause)
+			CASE ELSE
+				x$ = ""
+		END SELECT
+	LOOP UNTIL x$ = CHR$(13) OR x$ = CHR$(27)
+	x% = ASC(x$)
+	SELECT CASE x%
+		CASE 13                         ' One of the above
+			GetVSelection$ = LEFT$(Select$(Pointer%), Length%)
+		CASE 27
+			GetVSelection$ = SPACE$(Length%)
+	END SELECT
+	SCREEN , , 0, 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Presents acceptable mfr codes
+'============================================================================
+SUB MfrCode
+'----------------------------------------------------------------------------
+	Cputs "AEP Manufacturer Codes", 2
+
+	PutXY 5, 20, "01 - Landis & Gyr"
+	PutXY 6, 20, "03 - Jemtech"
+	PutXY 7, 20, "04 - General Electric"
+	PutXY 8, 20, "06 - Sangamo"
+	PutXY 9, 20, "07 - ABB"
+	PutXY 10, 20, "10 - Allis Chalmers"
+	PutXY 11, 20, "11 - Associated Engineering"
+	PutXY 12, 20, "12 - Ferranti-Packard"
+	PutXY 13, 20, "14 - Astra"
+	PutXY 14, 20, "16 - Meter Devices"
+	PutXY 15, 20, "26 - Electromagnetic Industries (Square D)"
+	PutXY 16, 20, "29 - Process Systems"
+
+	z$ = Get1Key$(CHR$(13), "Press ENTER to return to data entry/edit")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Moves field pointer forward/backward.  Skips hidden fields.
+'============================================================================
+SUB MoveFieldPointer (Ptr%, Work%(), Vline%())
+'----------------------------------------------------------------------------
+	DO
+		Ptr% = Work%(Ptr%)
+	LOOP UNTIL Vline%(Ptr%) > 0
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parses command line, puts argvs in string array Argv$, returns argc.
+'============================================================================
+FUNCTION ParseCmdLine% (Argv$())
+'----------------------------------------------------------------------------
+	Argc% = 0
+	Work$ = LTRIM$(COMMAND$) + SPACE$(5)
+	IF LTRIM$(RTRIM$(Work$)) = "" THEN
+		ParseCmdLine% = 0
+		EXIT FUNCTION
+	END IF
+	WHILE LTRIM$(RTRIM$(Work$)) > ""
+		Argc% = Argc% + 1
+		c$ = LEFT$(Work$, 1)
+		Work$ = MID$(Work$, 2)
+		WHILE INSTR(CHR$(9) + CHR$(32) + ",", c$) = 0
+			Argv$(Argc%) = Argv$(Argc%) + c$
+			c$ = LEFT$(Work$, 1)
+			Work$ = MID$(Work$, 2)
+		WEND
+	WEND
+	ParseCmdLine% = Argc%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints one selection
+'============================================================================
+SUB PrintaSel (Row%, Col%, Pointer%, Item$)
+'----------------------------------------------------------------------------
+	SELECT CASE Pointer% MOD 10
+		CASE 1
+			Temp% = 0
+		CASE 2
+			Temp% = 7
+		CASE 3
+			Temp% = 14
+		CASE 4
+			Temp% = 21
+		CASE 5
+			Temp% = 28
+		CASE 6
+			Temp% = 35
+		CASE 7
+			Temp% = 42
+		CASE 8
+			Temp% = 49
+		CASE 9
+			Temp% = 56
+		CASE 0
+			Temp% = 63
+	END SELECT
+ 
+	PutXY Pointer% \ 10 + Row% - ((Pointer% MOD 10) = 0), Col% + Temp%, Item$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints string passed in Message$ at screen location Row%, Column%.  Checks
+'   Row% and Column% for valid screen coordinates, and Column% plus Message$
+'   length the see that the string will fit on line Row%.  Exits without
+'   printing string if location invalid.  Leaves cursor on screen line Row%
+'============================================================================
+SUB PutXY (Row%, Column%, Message$)
+'----------------------------------------------------------------------------
+	IF Row% < 1 OR Row% > 25 OR Column% < 1 OR Column% > 79 THEN
+		EXIT SUB
+	END IF
+	IF Column% + LEN(Message$) > 80 THEN
+		EXIT SUB
+	END IF
+	LOCATE Row%, Column%
+	PRINT Message$;
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   List retirement reason codes
+'============================================================================
+SUB RetireCodes
+'----------------------------------------------------------------------------
+	CLS
+	Cputs "Retirement Codes", 2
+	LOCATE 4, 28
+	PRINT "Code Description"
+	PRINT TAB(28); "---- -----------"
+	PRINT
+	PRINT
+	PRINT TAB(30); "01 Lost/Stolen"
+	PRINT TAB(30); "02 Damaged"
+	PRINT TAB(30); "03 Obsolete"
+	PRINT TAB(30); "04 Defective"
+	PRINT TAB(30); "05 Utility Plant Sold"
+	z$ = Get1Key$(CHR$(13), "Press ENTER to return to data entry/edit")
+'****************************************************************************
+END SUB
+

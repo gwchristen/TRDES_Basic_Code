@@ -1,0 +1,120 @@
+'   MakeKWH - Makes energy report from power report
+'   Ken Kroninger
+'   American Electric Power
+'   Canton, Oh
+'   April, 1998
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION Round2$ (Value!)
+'============================================================================
+'   What it do
+'----------------------------------------------------------------------------
+'   This program will take an MV90 Kva report file and generate a KVAH
+'   information file.
+'============================================================================
+
+    CLS
+    LINE INPUT "MV90 filename (without KVA extension):"; InFile$
+  
+'   The user should just input the root filename, but just in case...
+
+    IF INSTR(InFile$, ".") = 0 THEN
+        OutFile$ = InFile$ + ".Kwh"
+        InFile$ = InFile$ + ".kva"
+    ELSE
+        OutFile$ = LEFT$(InFile$, INSTR(InFile$, ".")) + "Kwh"
+    END IF
+  
+'   Get a buffer.  Do it the right way.
+
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+
+'   Get another one.
+
+    OutFile% = FREEFILE
+    OPEN OutFile$ FOR OUTPUT AS #OutFile%
+  
+'   The main loop.  All this loop does is to read in a line, If it's a data
+'   line, divide the Kva values by 4 and put them back into the string.  If
+'   it's not a data line, other processing updates any header information,
+'   deletes extraneous information, and anything else that needs done that
+'   I've forgotten about while documenting the program.
+
+    DO
+        LINE INPUT #InFile%, Work$
+
+'              Data line - Divide values by 4  
+
+        IF MID$(Work$, 13, 1) = ":" THEN
+            IF INSTR("0123456789", MID$(Work$, 12, 1)) THEN
+                kw = VAL(MID$(Work$, 21, 7))
+                Kvar = VAL(MID$(Work$, 32, 7))
+                kva = VAL(MID$(Work$, 43, 7))
+                Kwh$ = RIGHT$(SPACE$(7) + Round2(kw / 4), 7)
+                Kvarh$ = RIGHT$(SPACE$(7) + Round2(Kvar / 4), 7)
+                Kvah$ = RIGHT$(SPACE$(7) + Round2(kva / 4), 7)
+                MID$(Work$, 21, 7) = Kwh$
+                MID$(Work$, 32, 7) = Kvarh$
+                MID$(Work$, 43, 7) = Kvah$
+            END IF
+        END IF
+      
+'           This information does not apply to energy data.
+
+        IF INSTR(Work$, "DAILY HIGH") OR INSTR(Work$, "DAILY LOW") THEN
+            Work$ = ""
+        END IF
+      
+'           Let 'em know it's energy, not power
+
+        IF MID$(Work$, 6, 10) = "DATE  TIME" THEN
+            MID$(Work$, 28, 1) = "H"
+            MID$(Work$, 39, 1) = "H"
+            MID$(Work$, 50, 1) = "H"
+            Work$ = LEFT$(Work$, 20) + MID$(Work$, 22)
+        END IF
+        IF INSTR(Work$, "KVA  ANALYSIS") THEN
+            MID$(Work$, 28, 1) = "H"
+        END IF
+      
+'   Print whatever we've got, which may be header, data or a null line.
+
+        PRINT Work$
+        PRINT #OutFile%, Work$
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+'****************************************************************************
+'   End of main module
+'****************************************************************************
+
+'****************************************************************************
+'   Function to round value to 2 decimal places.
+'   Takes a single precision number, returns a string.  I want to be able to
+'   have a trailing zeros on the output.
+'============================================================================
+FUNCTION Round2$ (Value)
+'----------------------------------------------------------------------------
+  
+'   The next line does most of the actual work.  Round the value, then
+'   convert it to a string.
+
+    r$ = STR$(INT(Value * 100 + .5) / 100)
+  
+'   If the rounded value happened to be an integer, add two zeros.
+
+    Period% = INSTR(r$, ".")
+    IF Period% = 0 THEN
+        r$ = r$ + ".00"
+    END IF
+  
+'   One decimal place, make it two
+
+    IF Period% = LEN(r$) - 1 THEN
+        r$ = r$ + "0"
+    END IF
+    Round2$ = r$
+'****************************************************************************
+END FUNCTION
+

@@ -1,0 +1,57 @@
+'   $title:'Check for error message actually returned from QB'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   Canton, OH
+'   version 0.10
+'============================================================================
+'   To use, put whatever code is needed between the labels Begin and TheEnd.
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   September, 1993
+'       First (and probably only) release
+'============================================================================
+'   Turn on error trap 
+'----------------------------------------------------------------------------
+    ON ERROR GOTO ErrorTrap
+'============================================================================
+Begin:  
+    CLS
+    LINE INPUT "File to open: "; InFile$
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    CLOSE
+TheEnd:  
+    END
+'============================================================================
+ErrorTrap:
+    PRINT "Error number returned by QB is: "; ERR
+    PRINT "Error device code #: "; ERDEV
+    PRINT "Error device code string: "; ERDEV$
+    SELECT CASE ERR
+        CASE 24
+            PRINT "Device timeout"
+        CASE 51
+            PRINT "Internal error"
+        CASE 53
+            PRINT "File not found"
+        CASE 57
+            PRINT "Device I/O error"
+        CASE 68
+            PRINT "Device not available"
+        CASE 71
+            PRINT "Disk not ready"
+        CASE 72
+            PRINT "Disk media error"
+        CASE 75
+            PRINT "Path/File access error"
+        CASE ELSE
+            PRINT "Not on the list yet!"
+    END SELECT
+    x$ = INPUT$(1)
+    RESUME TheEnd
+'****************************************************************************
+'   End of Chk4Err.Bas
+'****************************************************************************
+

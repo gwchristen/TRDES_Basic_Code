@@ -1,0 +1,83 @@
+'   $TITLE:'SATOCRATE - Print OPCO crate barcodes on SATO printer'
+'   R.W.Oehler
+'   January, 1994
+
+Programmer$ = "R.W.Oehler"
+E$ = CHR$(27)
+OPEN "lpt1:" FOR OUTPUT AS #1
+
+CLS
+PRINT
+PRINT "BARCODE LABELS FOR CRATES... "
+PRINT "DEFAULT IS lpt1, 2 LABELS PER CRATE"
+PRINT "VER 1.0  01-06-94  RWO/KWK & ASSOC."
+
+PRINT
+INPUT "       ENTER FOUR DIGIT STARTING CRATE NUMBER (NNNN) ", N$
+IF LEN(N$) > 4 THEN
+    PRINT
+    PRINT
+    PRINT "YOU HAVE ENTERED MORE THAN 4 DIGITS."
+    PRINT "USE "; RIGHT$(N$, 4); "? (Y/N)"
+    DO
+        X$ = UCASE$(INPUT$(1))
+    LOOP UNTIL INSTR("YN", X$) > 0
+    IF X$ = "N" THEN
+        RUN
+    END IF
+END IF
+N$ = RIGHT$("0000" + N$, 4)
+
+PRINT
+PRINT "       HOW MANY LABELS DO YOU WANT? {100 = 200 PRINTED, ETC.} "
+PRINT "       ENTER 0 TO ABORT THIS PROGRAM"
+LOCATE CSRLIN - 2, 62: INPUT G
+
+IF G = 0 THEN END
+
+R$ = LTRIM$(RTRIM$("B102070*OPCOCRATE0000"))
+W$ = LTRIM$(RTRIM$("L0202" + E$ + "M*OPCOCRATE0000"))
+
+FOR T = 1 TO G
+
+PRINT #1, E$; "A";
+PRINT #1, E$; "A3H0820V0001";    ' A3H SEEMS TO SET THE DEFAULT HORZ OFFSET
+                              ' (820 LOOKS GOOD) "V000" SETS VERT. OFFSET
+                              '
+                              '  SET THE VERT AND HORZ OFFSET ON EACH LINE!
+                              '
+
+M$ = LTRIM$(RTRIM$((N$) + "*"))
+
+PRINT #1, E$; "H15"; E$; "V001"; E$; R$; M$        ' PRINTS THE BARCODE
+PRINT #1, E$; "H15"; E$; "V080"; E$; W$; M$        ' PRINTS THE LINE OF TEXT
+
+
+PRINT #1, E$; "Q1";         ' Q SEEMS TO BE END OF MESSAGE
+PRINT #1, E$; "Z";          ' Z SEEMS TO MAKE IT PRINT
+
+PRINT #1, E$; "A"; E$; "C"; E$; "Z"    'SENDS COMMAND TO REPEAT THE LAST LINE
+
+
+N$ = RIGHT$("0000" + RTRIM$(LTRIM$(STR$(VAL(N$) + 1))), 4)
+
+
+NEXT     '  END OF ONLY DO LOOP IN THIS PROGRAM!
+
+'  THE FOLLOWING CODE SPITS OUT 2 LABELS WITH "END OF JOB" ON
+'  NORMAL TERMINATION
+
+Q$ = LTRIM$(RTRIM$("L0302" + E$ + "M*END OF JOB"))
+
+PRINT #1, E$; "A";
+PRINT #1, E$; "A3H0820V0001";    ' A3H SEEMS TO SET THE DEFAULT HORZ OFFSET
+                                 ' (820 LOOKS GOOD) "V000" SETS VERT. OFFSET
+
+PRINT #1, E$; "H15"; E$; "V030"; E$; Q$        ' PRINTS THE LINE OF TEXT
+PRINT #1, E$; "Q1";         ' Q SEEMS TO BE END OF MESSAGE
+PRINT #1, E$; "Z";          ' Z SEEMS TO MAKE IT PRINT
+PRINT #1, E$; "A"; E$; "C"; E$; "Z"
+
+END
+
+

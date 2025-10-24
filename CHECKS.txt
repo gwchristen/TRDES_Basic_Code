@@ -1,0 +1,314 @@
+'   $title:'Checks.Bas - MRDES II/TRDES check routines'
+'   Version 3.00
+'   All return 0 for successful check, 1 for failure
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory 
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Added CheckRegion% function
+'============================================================================
+'   Record type(s)
+'----------------------------------------------------------------------------
+'   Repair data record type
+'   This looks at the repair list record as it is received from Enable
+    TYPE RepairData
+        Serial AS STRING * 9
+        Code AS STRING * 5
+        Area AS STRING * 1
+        Mfr AS STRING * 2
+        Ac AS STRING * 2
+    END TYPE
+'============================================================================
+'   Declare functions and subprograms
+'----------------------------------------------------------------------------
+DECLARE FUNCTION AllCheck% (x$, Check$)
+DECLARE FUNCTION CheckDate% (Value$)
+DECLARE FUNCTION CheckDivision% (V$)
+DECLARE FUNCTION CheckField% (Value$, Accept$)
+DECLARE FUNCTION CheckRegion% (V$)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION LookUpArea$ (q$)
+DECLARE FUNCTION LookUpCode% (Value$, FileName$)
+DECLARE FUNCTION OneDec% (Look$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+
+'****************************************************************************
+'   Formats activity code, then checks against list in the file ACTIVITY.
+'============================================================================
+SUB ActivityCode (Value$, Vlen%, Eflag%, Estring$)
+'----------------------------------------------------------------------------
+
+'   If the field is blank, it's an error.
+
+    IF LTRIM$(RTRIM$(Value$)) = "" THEN
+        Eflag% = 1
+        Estring$ = "Activity code REQUIRED"
+        EXIT SUB
+    END IF
+
+'   Format field properly.
+
+    Value$ = RIGHT$("00" + LTRIM$(RTRIM$(Value$)), Vlen%)
+
+'   Now check it against list
+
+    Eflag% = LookUpCode%(Value$, "ACTIVITY")
+    IF Eflag% = 1 THEN
+        Estring$ = "Bad activity code"
+    END IF
+    Flag% = Eflag%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks each character in x$ to see that it is in Check$.
+'   Returns zero if all is well, one if bad character found.
+'============================================================================
+FUNCTION AllCheck% (x$, Check$)
+'----------------------------------------------------------------------------
+    FOR x% = 1 TO LEN(x$)
+        IF INSTR(Check$, MID$(x$, x%, 1)) = 0 THEN
+            AllCheck% = 1
+            EXIT FUNCTION
+        END IF
+    NEXT
+    AllCheck% = 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Check date passed in Value$ for acceptability for input to MDS.
+'   Returns zero if all is well, one if error.
+'============================================================================
+FUNCTION CheckDate% (Value$)
+'----------------------------------------------------------------------------
+
+'   Check for acceptable characters.
+
+    FOR x% = 1 TO LEN(Value$)
+        IF INSTR("0123456789", MID$(Value$, x%, 1)) = 0 THEN
+            CheckDate% = 1
+            EXIT FUNCTION
+        END IF
+    NEXT
+  
+'   Now check for valid month
+
+    Month% = VAL(LEFT$(Value$, 2))
+    IF Month% < 1 OR Month% > 12 THEN
+        CheckDate% = 1
+        EXIT FUNCTION
+    END IF
+
+'   Get the day number.  Set flag for obvious problem
+
+    Day% = VAL(MID$(Value$, 3, 2))
+    IF Day% < 1 OR Day% > 31 THEN
+        CheckDate% = 1
+        EXIT FUNCTION
+    END IF
+
+'   Check for leap year.  Include all the little gotchas in the Gregorian
+'   calendar.
+
+    Year% = VAL(RIGHT$(Value$, 4))
+   
+    Leap% = (ABS((Year% MOD 4) = 0) AND ABS((Year% MOD 100) > 0)) OR ABS((Year% MOD 400) = 0)
+   
+    SELECT CASE Month%
+        CASE 1, 3, 5, 7, 8, 10, 12
+            Days% = 31
+        CASE 4, 6, 9, 11
+            Days% = 30
+        CASE 2
+            Days% = Leap% + 28
+    END SELECT
+
+    CheckDate% = ABS(Day% > Days%)
+
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks for valid Ohio Power Divisions
+'============================================================================
+FUNCTION CheckDivision% (V$)
+'----------------------------------------------------------------------------
+
+'   First, check for valid characters
+
+    FOR c% = 1 TO LEN(V$)
+        IF INSTR("0123456789", MID$(V$, c%, 1)) = 0 THEN
+            IF c% = 3 THEN
+                IF MID$(V$, c%, 2) = "VA" OR MID$(V$, c%, 2) = "WV" THEN
+                    c% = 4
+                END IF
+            ELSE
+                CheckDivision% = 1
+                EXIT FUNCTION
+            END IF
+        END IF
+    NEXT
+
+'   Character check passed.
+'   The general operation of this function is to set the error flag, then
+'   clear the flag if/when the input division/area code matches a valid code.
+
+    ErrFlag% = LookUpCode%(V$, "DIVISION")
+    CheckDivision% = ErrFlag%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks field for acceptable characters and no more than one decimal point
+'   using calls to AllCheck and OneDec.  Returns 0 for checks passed, 1 for
+'   failed.
+'============================================================================
+FUNCTION CheckField% (Value$, Accept$)
+'----------------------------------------------------------------------------
+    CheckField% = AllCheck%(Value$, Accept$) OR OneDec%(Value$)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks for valid American Electric Power Region Code
+'============================================================================
+FUNCTION CheckRegion% (V$)
+'----------------------------------------------------------------------------
+'   The general operation of this function is to set the error flag, then
+'   clear the flag if/when the input division/area code matches a valid code.
+
+    ErrFlag% = LookUpCode%(V$, "REGION")
+    CheckRegion% = ErrFlag%
+'****************************************************************************
+
+END FUNCTION
+
+'****************************************************************************
+'   Looks up and returns company name from code passed in q$.
+'============================================================================
+FUNCTION LookUpArea$ (q$)
+'----------------------------------------------------------------------------
+'   Need to add IMP company code to this.
+
+    SELECT CASE q$
+        CASE "0"
+            x$ = "CSP"
+        CASE "4"
+            x$ = "I&M"
+        CASE "7"
+            x$ = "OP"
+        CASE ELSE
+            x$ = "Not on list"
+    END SELECT
+  
+    LookUpArea$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Checks lookup file for value passed in Value$.  Returns 0 for success, 1
+'   for failure.
+'============================================================================
+FUNCTION LookUpCode% (Value$, FileName$)
+'----------------------------------------------------------------------------
+   
+    WorkFile% = FREEFILE
+   
+    OPEN FileName$ FOR INPUT AS #WorkFile%
+  
+'   First line in file is a comment
+
+    LINE INPUT #WorkFile%, Junk$
+   
+    Flag% = 1
+   
+    DO
+        INPUT #WorkFile%, Test$
+        IF LEFT$(Test$, LEN(Value$)) = Value$ THEN
+            Flag% = 0
+        END IF
+    LOOP UNTIL EOF(WorkFile%) OR Flag% = 0
+   
+    CLOSE #WorkFile%
+   
+    LookUpCode% = Flag%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Formats mfr code data field, then checks against list in file MFR.
+'============================================================================
+SUB MfrLookup (Value$, Vlen%, Eflag%, Estring$)
+'----------------------------------------------------------------------------
+'   If this field is blank, it's wrong.
+
+    IF LTRIM$(RTRIM$(Value$)) = "" THEN
+        Eflag% = 1
+        Estring$ = "Mfr code REQUIRED"
+        EXIT SUB
+    END IF
+  
+'   Format the field
+
+    Value$ = RIGHT$("00" + LTRIM$(RTRIM$(Value$)), Vlen%)
+   
+'   Now check it against the list.
+
+    MfrFile% = FREEFILE
+    Eflag% = LookUpCode%(Value$, "MFR")
+    IF Eflag% = 1 THEN
+        Estring$ = "Bad manufacturer code"
+    END IF
+    Flag% = Eflag%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Function to check that there is no more than one decimal point in a
+'   string.  Returns zero if all is well, one if there's an error.
+'============================================================================
+FUNCTION OneDec% (Look$)
+'----------------------------------------------------------------------------
+    DecPt% = 0
+    FOR x% = 1 TO LEN(Look$)
+        IF MID$(Look$, x%, 1) = "." THEN
+            DecPt% = DecPt% + 1
+        END IF
+    NEXT
+    OneDec% = ABS(DecPt% > 1)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Looks up acceptable retire codes in file RETIRE.
+'============================================================================
+SUB RetireLookup (Value$, Vlen%, Eflag%, Estring$)
+'----------------------------------------------------------------------------
+'   If this field is blank, the item was not retired.  Exit.
+
+    IF LTRIM$(RTRIM$(Value$)) = "" THEN
+        EXIT SUB
+    END IF
+   
+    Value$ = RIGHT$(STRING$(Vlen%, "0") + LTRIM$(RTRIM$(Value$)), Vlen%)
+   
+    MfrFile% = FREEFILE
+   
+    Eflag% = LookUpCode%(Value$, "RETIRE")
+   
+    IF Eflag% = 1 THEN
+        Estring$ = "Bad retirement code"
+    END IF
+   
+    Flag% = Eflag%
+'****************************************************************************
+END SUB
+

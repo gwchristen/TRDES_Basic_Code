@@ -1,0 +1,38 @@
+'   $title:'DATEBACK - Renames file passed on command line to date filename'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   March, 1993
+'       First issue
+'   April, 1993
+'       Changed to allow more than one backup in a day
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+'   Renames file identifed by OldName$ to a name based on the system date.
+'   Allows up to 26 backups per day.  First backup file has an "A" appended
+'   to the date, the last possible a "Z".  Returns 0 on success, 1 on failure.
+DECLARE FUNCTION DateBack% (OldName$)
+'============================================================================
+    OldName$ = LTRIM$(RTRIM$(COMMAND$))
+    IF OldName$ = "" THEN
+        PRINT "Useage:  DATEBACK <filename>"
+        END
+    END IF
+    Status% = DateBack%(OldName$)
+    IF Status% = 1 THEN
+        PRINT "Could not rename!"
+        x& = TIMER + 30
+        WHILE x& > TIMER
+        WEND
+    END IF
+    Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+'   End of DateBack.Bas
+'****************************************************************************
+

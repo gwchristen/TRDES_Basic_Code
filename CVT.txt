@@ -1,0 +1,126 @@
+'   $title:'Singlephase data select/convert utility'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Lab
+'   version 0.30
+'============================================================================
+'   History (last 12 months maximum)
+'----------------------------------------------------------------------------
+'   June, 1993
+'       First release
+'   July, 1993
+'       Corrected problem caused by GE shipments.
+'   April, 1994
+'       Took out check for activity code
+'   July, 1994
+'       Source code reorganization
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB AppendEOF (FileName$)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+'============================================================================
+'   Turn on error trap
+    ON ERROR GOTO NetProblem
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+
+'   Get starting serial number, if any
+
+    CLS
+    LOCATE 5, 10
+    LINE INPUT "Starting serial number: "; Serial$
+    Serial$ = LTRIM$(RTRIM$(Serial$))
+
+    IF Serial$ = "" THEN
+        PRINT "Singlephase meter data select/convert utility - version 0.20"
+        END
+    END IF
+  
+    LOCATE 10, 10
+    LINE INPUT "Ending serial number: "; EndSerial$
+    EndSerial$ = LTRIM$(RTRIM$(EndSerial$))
+
+    PRINT TAB(10); USING "starting with serial number \       \"; Serial$
+    PRINT TAB(10); USING "  ending with serial number \       \"; EndSerial$
+
+'   Read in .ini file to find data file
+
+    IniFile% = FREEFILE
+    OPEN "CVT.INI" FOR INPUT AS #IniFile%
+    LINE INPUT #IniFile%, InFile$
+    LINE INPUT #IniFile%, OutFile$
+    CLOSE #IniFile%
+    InFile$ = LTRIM$(RTRIM$(InFile$))
+
+'   Open, then close output file.  This effectively resets it.
+
+    OutFile% = FREEFILE
+    OPEN OutFile$ FOR OUTPUT AS #OutFile%
+    CLOSE #OutFile%
+    
+'   Open file and process
+
+    CLS
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    DO
+        LINE INPUT #InFile%, Work$
+        IF INSTR("12", LEFT$(Work$, 1)) > 0 THEN
+            IF MID$(Work$, 36, 3) = "006" THEN
+                S$ = LTRIM$(RTRIM$(MID$(Work$, 39, 9)))
+                IF S$ >= Serial$ AND S$ <= EndSerial$ THEN
+                    Flaf$ = MID$(Work$, 253, 3) + "." + MID$(Work$, 256, 2)
+                    Pfaf$ = MID$(Work$, 258, 3) + "." + MID$(Work$, 261, 2)
+                    Llaf$ = MID$(Work$, 263, 3) + "." + MID$(Work$, 266, 2)
+                    Flal$ = MID$(Work$, 268, 3) + "." + MID$(Work$, 271, 2)
+                    Pfal$ = MID$(Work$, 273, 3) + "." + MID$(Work$, 276, 2)
+                    Llal$ = MID$(Work$, 278, 3) + "." + MID$(Work$, 281, 2)
+                    IF MID$(Work$, 184, 1) = "Y" THEN
+                        Rep$ = "1"
+                    ELSE
+                        Rep$ = " "
+                    END IF
+                    Defa$ = MID$(Work$, 192, 1)
+                    Defb$ = MID$(Work$, 194, 1)
+                    Defc$ = MID$(Work$, 196, 1)
+                    Comment$ = LTRIM$(RTRIM$(MID$(Work$, 132, 50)))
+                    OutFile% = FREEFILE
+                    OPEN OutFile$ FOR APPEND AS #OutFile%
+                    WRITE #OutFile%, S$, Flaf$, Pfaf$, Llaf$, Flal$, Pfal$, Llal$, Rep$, Defa$, Defb$, Defc$, Comment$
+                    CLOSE #OutFile%
+                    WRITE S$
+                END IF      ' Serial number is in desired range
+            END IF              ' Singlephase
+        END IF                  ' Test record
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+    AppendEOF OutFile$
+
+Split:
+    END
+
+'============================================================================
+'   Error traps
+'----------------------------------------------------------------------------
+'   Network Problems
+
+NetProblem:
+    IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+        Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+    ELSE
+        x& = TIMER + 10
+        DO
+        Junk$ = INKEY$
+        LOOP UNTIL Junk$ = CHR$(27) OR x& < TIMER
+    END IF
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+'****************************************************************************
+'   End of CVT.BAS
+'****************************************************************************
+

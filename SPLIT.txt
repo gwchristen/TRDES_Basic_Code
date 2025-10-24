@@ -1,0 +1,419 @@
+'   $title:'Split OP/CSP records for transfer to MDS'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Version 0.10
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   August, 1994
+'       First issue
+'============================================================================
+'   Record templates
+'----------------------------------------------------------------------------
+    TYPE SplitRecord
+        Mrdesii AS STRING * 63
+        Test AS INTEGER
+        Trdes AS STRING * 63
+        Ct AS INTEGER
+        Vt AS INTEGER
+        Rt AS INTEGER
+        MtrFt AS INTEGER
+    END TYPE
+'----------------------------------------------------------------------------
+'   MRDES II information record type
+    TYPE InfoRecord
+        NumberOfRecords AS INTEGER
+        ProcessFlag AS STRING * 1
+        InitDate AS STRING * 10
+        EditDate AS STRING * 10
+        ProcDate AS STRING * 10
+        Signature AS STRING * 20
+    END TYPE
+'----------------------------------------------------------------------------
+'   MRDES II buffer record type
+    TYPE DataBuffer
+        Buffer AS STRING * 500
+    END TYPE
+'----------------------------------------------------------------------------
+'   TRDES information record type
+    TYPE TrdesInformation
+        NumberOfRecords AS INTEGER
+        Signature AS STRING * 20
+    END TYPE
+'----------------------------------------------------------------------------
+'   TRDES buffer record type
+    TYPE TrdesBuffer
+        Buffer AS STRING * 1000
+    END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION ReadIniFile% (Info AS SplitRecord, IniFile$)
+DECLARE FUNCTION SplitMeterRecs% (Info AS SplitRecord)
+DECLARE FUNCTION SplitTransfRecords% (Info AS SplitRecord)
+'============================================================================
+'   Dimension arrays, record types
+'----------------------------------------------------------------------------
+    DIM Info AS SplitRecord
+'============================================================================
+'   Activate error handler
+'----------------------------------------------------------------------------
+'    ON ERROR GOTO NetProblem
+'============================================================================
+'   Get .ini filename from command line.  If it's not there, default is
+'   Split.Ini in the default directory
+'----------------------------------------------------------------------------
+    IniFile$ = LTRIM$(RTRIM$(COMMAND$))
+
+'   Check for diagnostics
+
+    IF UCASE$(LEFT$(IniFile$, 1)) = "V" THEN
+        PRINT "SPLIT: OP/CSP record split utility - version 0.10"
+        END
+    END IF
+
+    IF LCASE$(IniFile$) = "diagnostic" THEN
+        PRINT "Diagnostic information"
+        PRINT Info.Mrdesii
+        PRINT Info.Test
+        PRINT Info.Trdes
+        PRINT Info.Ct
+        PRINT Info.Vt
+        PRINT Info.Rt
+        PRINT Info.MtrFt
+        END
+    END IF
+
+    IF IniFile$ = "" THEN
+        IniFile$ = "Split.Ini"
+    END IF
+
+'   Read the .ini file
+
+    Status% = ReadIniFile%(Info, IniFile$)
+
+'   Trouble in paradise?
+
+    IF Status% > 0 THEN
+        CLS
+        PRINT "Problem in init file"
+        PRINT "Cannot continue"
+        PRINT
+        PRINT "Control information"
+        PRINT Info.Mrdesii
+        PRINT Info.Test
+        PRINT Info.Trdes
+        PRINT Info.Ct
+        PRINT Info.Vt
+        PRINT Info.Rt
+        PRINT Info.MtrFt
+        END
+    END IF
+
+'   If we get here, the .ini file read was successful.  Process the file(s).
+
+'   Are there meter records?
+
+    Mrdesii$ = LTRIM$(RTRIM$(Info.Mrdesii)) + "mrdes.dat"
+
+    Test% = FREEFILE
+   
+    OPEN Mrdesii$ FOR BINARY AS #Test%
+
+    IF LOF(Test%) > 0 THEN
+        Status% = 1
+    ELSE
+        Status% = 0
+    END IF
+
+    CLOSE #Test%
+   
+    IF Status% THEN
+        Recs% = SplitMeterRecs%(Info)
+        PRINT USING "##### meter records processed"; Recs%
+    ELSE
+        KILL Mrdesii$
+        PRINT "No meter records to process"
+    END IF
+
+'   Are there transformer records?
+
+    Trdes$ = LTRIM$(RTRIM$(Info.Trdes)) + "trsdat.dat"
+
+    Test% = FREEFILE
+  
+    OPEN Trdes$ FOR BINARY AS #Test%
+
+    IF LOF(Test%) > 0 THEN
+        Status% = 1
+    ELSE
+        Status% = 0
+    END IF
+
+    CLOSE #Test%
+  
+    IF Status% THEN
+        Recs% = SplitTransfRecords%(Info)
+
+        PRINT USING "##### transformer records processed"; Recs%
+    ELSE
+        KILL Trdes$
+        PRINT "No transformer records to process"
+    END IF
+
+
+Split:
+
+    END
+'============================================================================
+'   Network Problems
+
+NetProblem:
+ 
+    x& = TIMER + 10
+    SELECT CASE ERR
+        CASE 2, 3, 4, 5, 6, 7
+            Er$ = "Internal error..."
+        CASE 24, 68
+            Er$ = "Device timeout"
+        CASE 25
+            Er$ = "Device fault"
+        CASE 27
+            Er$ = "Out of paper"
+        CASE 53
+            Er$ = "File not found"
+        CASE 57
+            Er$ = "Device I/O error"
+        CASE 61
+            Er$ = "Disk full"
+        CASE 68
+            Er$ = "Device not available"
+        CASE 69
+            Er$ = "Communication buffer overflow"
+        CASE 71
+            Er$ = "Disk not ready"
+        CASE 72
+            Er$ = "Disk-media error"
+        CASE ELSE
+            Er$ = "Error" + STR$(ERR)
+    END SELECT
+   
+    LOCATE 25, 1
+    PRINT SPACE$(79);
+   
+    LOCATE 25, 1
+    PRINT Er$ + " - Enter to retry, Esc to exit  (" + STR$(ERR) + ")"
+   
+    DO
+        Junk$ = INKEY$
+    LOOP UNTIL Junk$ = CHR$(13) OR Junk$ = CHR$(27) OR x& < TIMER
+   
+    LOCATE 25, 1
+    PRINT SPACE$(78);
+
+    IF Junk$ = CHR$(27) THEN
+        RESUME Split
+    ELSE
+        RESUME
+    END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of Ctcheck.Bas main module
+'****************************************************************************
+
+'****************************************************************************
+'   Reads Split.Ini, sets variables as needed.
+'============================================================================
+FUNCTION ReadIniFile% (Info AS SplitRecord, IniFile$)
+'----------------------------------------------------------------------------
+    InFile% = FREEFILE
+    OPEN IniFile$ FOR INPUT AS #InFile%
+    DO
+        LINE INPUT #InFile%, Work$          ' Get a line
+        Work$ = LTRIM$(RTRIM$(Work$))       ' Remove any spaces
+        IF Work$ <> "" AND INSTR("#;", LEFT$(Work$, 1)) = 0 THEN
+            IF UCASE$(LEFT$(Work$, 7)) = "MRDESII" THEN
+                Info.Mrdesii = MID$(Work$, INSTR(Work$, "=") + 1)
+            END IF
+            IF UCASE$(LEFT$(Work$, 4)) = "TEST" THEN
+                Info.Test = VAL(MID$(Work$, INSTR(Work$, "=") + 1))
+            END IF
+            IF UCASE$(LEFT$(Work$, 5)) = "TRDES" THEN
+                Info.Trdes = MID$(Work$, INSTR(Work$, "=") + 1)
+            END IF
+            IF UCASE$(LEFT$(Work$, 2)) = "CT" THEN
+                Info.Ct = VAL(MID$(Work$, INSTR(Work$, "=") + 1))
+            END IF
+            IF UCASE$(LEFT$(Work$, 2)) = "VT" THEN
+                Info.Vt = VAL(MID$(Work$, INSTR(Work$, "=") + 1))
+            END IF
+            IF UCASE$(LEFT$(Work$, 2)) = "RT" THEN
+                Info.Rt = VAL(MID$(Work$, INSTR(Work$, "=") + 1))
+            END IF
+            IF UCASE$(LEFT$(Work$, 5)) = "MTRFT" THEN
+                Info.MtrFt = VAL(MID$(Work$, INSTR(Work$, "=") + 1))
+            END IF
+        END IF
+    LOOP UNTIL LEFT$(Work$, 1) = "#"
+    CLOSE #InFile%
+  
+'   Set status flag to no error, then check to see if we got everything we
+'   were supposed to.  If not set flag to error.
+
+    ReadIniFile% = 0
+    IF Info.Mrdesii = "" OR Info.Trdes = "" OR Info.Test = 0 OR Info.Ct = 0 OR Info.Vt = 0 OR Info.Rt = 0 OR Info.MtrFt = 0 THEN
+        ReadIniFile% = 1
+    END IF
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Splits meter record data files.
+'============================================================================
+FUNCTION SplitMeterRecs% (Info AS SplitRecord)
+'----------------------------------------------------------------------------
+    DIM InfoRec AS InfoRecord, DataRec AS DataBuffer, Op AS InfoRecord
+    DIM Csp AS InfoRecord
+   
+    Mrdes$ = LTRIM$(RTRIM$(Info.Mrdesii)) + "Mrdes.Dat"
+    Opc$ = LTRIM$(RTRIM$(Info.Mrdesii)) + "Op.Dat"
+    Cs$ = LTRIM$(RTRIM$(Info.Mrdesii)) + "Csp.Dat"
+   
+    InFile% = FREEFILE
+   
+    OPEN Mrdes$ FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+    GET #InFile%, 1, InfoRec
+
+    IF InfoRec.NumberOfRecords = 0 THEN     ' If there's no recs, forget it.
+        CLOSE #InFile%
+        SplitMeterRecs% = 0
+        EXIT FUNCTION
+    END IF
+
+'   Get the Ohio Power file ready
+
+    Opc% = FREEFILE
+    OPEN Opc$ FOR RANDOM AS #Opc% LEN = LEN(DataRec)
+    GET #Opc%, 1, Op
+    IF Op.NumberOfRecords = 0 THEN
+        Op.ProcessFlag = "U"
+        Op.InitDate = DATE$
+        Op.EditDate = DATE$
+        Op.Signature = "Ohio Power Recs"
+    END IF
+
+'   Get the Columbus Southern Power file ready
+
+    Cs% = FREEFILE
+    OPEN Cs$ FOR RANDOM AS #Cs% LEN = LEN(DataRec)
+    GET #Cs%, 1, Csp
+    IF Csp.NumberOfRecords = 0 THEN
+        Csp.ProcessFlag = "U"
+        Csp.InitDate = DATE$
+        Csp.EditDate = DATE$
+        Csp.Signature = "CS Power Recs"
+    END IF
+
+'   Ok, files are open, and there are records... Do the deed
+
+    FOR Counter% = 1 TO InfoRec.NumberOfRecords
+        GET #InFile%, Counter% + 1, DataRec
+        IF MID$(DataRec.Buffer, Info.Test, 1) = "7" THEN
+            Op.NumberOfRecords = Op.NumberOfRecords + 1
+            PUT #Opc%, Op.NumberOfRecords + 1, DataRec
+        ELSE
+            Csp.NumberOfRecords = Csp.NumberOfRecords + 1
+            PUT #Cs%, Csp.NumberOfRecords + 1, DataRec
+        END IF
+    NEXT
+  
+'   Update the information records and close the files
+
+    PUT #Opc%, 1, Op
+    CLOSE #Opc%
+    PUT #Cs%, 1, Csp
+    CLOSE #Cs%
+    CLOSE #InFile%
+   
+    SplitMeterRecs% = InfoRec.NumberOfRecords
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Splits transformer records
+'============================================================================
+FUNCTION SplitTransfRecords% (Info AS SplitRecord)
+'----------------------------------------------------------------------------
+    DIM InfoRec AS TrdesInformation, Op AS TrdesInformation
+    DIM Csp AS TrdesInformation, DataRec AS TrdesBuffer
+  
+    Trdes$ = LTRIM$(RTRIM$(Info.Trdes)) + "trsdat.dat"
+    Opc$ = LTRIM$(RTRIM$(Info.Trdes)) + "OpTran.Dat"
+    Cs$ = LTRIM$(RTRIM$(Info.Trdes)) + "CspTran.Dat"
+  
+    InFile% = FREEFILE
+  
+    OPEN Trdes$ FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+    GET #InFile%, 1, InfoRec
+
+    IF InfoRec.NumberOfRecords = 0 THEN     ' If there's no recs, forget it.
+        CLOSE #InFile%
+        SplitTransfRecs% = 0
+        EXIT FUNCTION
+    END IF
+
+'   Get the Ohio Power file ready
+
+    Opc% = FREEFILE
+    OPEN Opc$ FOR RANDOM AS #Opc% LEN = LEN(DataRec)
+    GET #Opc%, 1, Op
+    IF Op.NumberOfRecords = 0 THEN
+        Op.Signature = "Ohio Power Recs"
+    END IF
+
+'   Get the Columbus Southern Power file ready
+
+    Cs% = FREEFILE
+    OPEN Cs$ FOR RANDOM AS #Cs% LEN = LEN(DataRec)
+    GET #Cs%, 1, Csp
+    IF Csp.NumberOfRecords = 0 THEN
+        Csp.Signature = "CS Power Recs"
+    END IF
+
+'   Ok, files are open, and there are records... Do the deed
+
+    FOR Counter% = 1 TO InfoRec.NumberOfRecords
+        GET #InFile%, Counter% + 1, DataRec
+        SELECT CASE LEFT$(DataRec.Buffer, 1)
+            CASE "1"            ' CT
+                Position% = Info.Ct
+            CASE "3"            ' VT
+                Position% = Info.Vt
+            CASE "6"            ' RT
+                Position% = Info.Rt
+            CASE "7"            ' Metering Outfit
+                Position% = Info.MtrFt
+        END SELECT
+        IF MID$(DataRec.Buffer, Info.Test, 1) = "7" THEN
+            Op.NumberOfRecords = Op.NumberOfRecords + 1
+            PUT #Opc%, Op.NumberOfRecords + 1, DataRec
+        ELSE
+            Csp.NumberOfRecords = Csp.NumberOfRecords + 1
+            PUT #Cs%, Csp.NumberOfRecords + 1, DataRec
+        END IF
+    NEXT
+ 
+'   Update the information records and close the files
+
+    PUT #Opc%, 1, Op
+    CLOSE #Opc%
+    PUT #Cs%, 1, Csp
+    CLOSE #Cs%
+    CLOSE #InFile%
+  
+    SplitTransRecs% = InfoRec.NumberOfRecords
+
+'****************************************************************************
+END FUNCTION
+

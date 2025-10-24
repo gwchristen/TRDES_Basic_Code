@@ -1,0 +1,40 @@
+DECLARE FUNCTION Julian& ()
+DECLARE FUNCTION Mayan$ ()
+
+'****************************************************************************
+'   Calculates Julian day number from computer calendar.
+'============================================================================
+FUNCTION Julian&
+'----------------------------------------------------------------------------
+    Year = VAL(RIGHT$(DATE$, 4))
+    Month = VAL(LEFT$(DATE$, 2))
+    Day = VAL(MID$(DATE$, 4, 2))
+    IF Month < 3 THEN
+        Month = Month + 13
+        Year = Year - 1
+    ELSE
+        Month = Month + 1
+    END IF
+    Julian& = INT(365.25 * Year) + INT(30.6001 * Month) + Day + 1720981
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Returns print string for Mayan Date (long count)
+'   Uses Julian&
+'============================================================================
+FUNCTION Mayan$
+'----------------------------------------------------------------------------
+    Work& = Julian& - 584284
+    b$ = LTRIM$(RTRIM$(STR$(Work& \ 144000))) + " Baktun "
+    Work& = Work& MOD 144000
+    K$ = LTRIM$(RTRIM$(STR$(Work& \ 7200))) + " Katun "
+    Work& = Work& MOD 7200
+    T$ = LTRIM$(RTRIM$(STR$(Work& \ 360))) + " Tun "
+    Work& = Work& MOD 360
+    U$ = LTRIM$(RTRIM$(STR$(Work& \ 20))) + " Uinal "
+    Kin$ = LTRIM$(RTRIM$(STR$(Work& MOD 20))) + " Kin"
+    Mayan$ = "Mayan date: " + b$ + K$ + T$ + U$ + Kin$
+'****************************************************************************
+END FUNCTION
+

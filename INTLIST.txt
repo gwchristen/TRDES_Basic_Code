@@ -1,0 +1,335 @@
+'   $title:'INTLIST - List elements in Interface File Data Record'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   Version 0.20
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1992
+'       First Release
+'============================================================================
+'   Declare Procedures
+'----------------------------------------------------------------------------
+DECLARE SUB ParseDataRecord (Work$)
+DECLARE SUB ParseHeaderRecord (Work$)
+DECLARE SUB ParseTrailerRecord (Work$)
+DECLARE SUB PrintaLine ()
+DECLARE SUB PrintDataRecord ()
+DECLARE SUB PrintHeaderRecord ()
+DECLARE SUB PrintTrailerRecord ()
+DECLARE SUB Prtl (Work$)
+'============================================================================
+'   Dimension array
+'----------------------------------------------------------------------------
+    DIM SHARED Outfile%, Value$(100)
+    Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   If input filespec is on command line, use it, otherwise prompt for it.
+'----------------------------------------------------------------------------
+    CLS
+    InFile$ = LTRIM$(RTRIM$(COMMAND$))
+    IF InFile$ = "" THEN
+        LINE INPUT "Input Filespec:"; InFile$
+        InFile$ = LTRIM$(RTRIM$(InFile$))
+        IF InFile$ = "" THEN
+            END
+        END IF
+    END IF
+  
+'   Prompt for output filespec in any case.  Set default to screen.
+
+    LINE INPUT "Output filespec (just press Enter for screen):"; Outfile$
+    Outfile$ = LTRIM$(RTRIM$(Outfile$))
+    IF Outfile$ = "" THEN
+        Outfile$ = "CON"
+    END IF
+   
+'   Open the files
+
+    InFile% = FREEFILE
+    OPEN InFile$ FOR INPUT AS #InFile%
+    Outfile% = FREEFILE
+    OPEN Outfile$ FOR OUTPUT AS #Outfile%
+  
+'   Here's the loop that does the work.  Read the file, one record, at a time,
+'   and call proper subs to process it.  Continue until the end of the input
+'   file is reached.
+
+    DO
+        x$ = INKEY$                         ' Allow abort with Esc key
+        IF x$ = CHR$(27) THEN
+            EXIT DO
+        END IF
+        LINE INPUT #InFile%, Work$
+        Code$ = LEFT$(Work$, 1)             ' Get Transaction Code
+        SELECT CASE Code$
+            CASE "H"
+                ParseHeaderRecord (Work$)
+                PrintHeaderRecord
+            CASE "T"
+                ParseTrailerRecord (Work$)
+                PrintTrailerRecord
+            CASE ELSE
+                ParseDataRecord (Work$)
+                PrintDataRecord
+        END SELECT
+    LOOP UNTIL EOF(InFile%)
+    CLOSE
+    CLS
+    END
+'****************************************************************************
+'   End of INTLIST.BAS main module
+'****************************************************************************
+
+'****************************************************************************
+'   Parse Elements from Interface File Data Record
+'============================================================================
+SUB ParseDataRecord (Work$)
+'----------------------------------------------------------------------------
+    Work$ = Work$ + SPACE$(500)         ' Make string long enough to eliminate problems
+    Value$(1) = MID$(Work$, 1, 1)       ' Transaction Code
+    Value$(2) = MID$(Work$, 2, 2)       ' Company Code
+    Value$(3) = MID$(Work$, 4, 2)       ' State Code
+    Value$(4) = MID$(Work$, 6, 2)       ' Division Code
+    Value$(5) = MID$(Work$, 8, 3)       ' Area Code
+    Value$(6) = MID$(Work$, 11, 3)      ' Storeroom Number
+    Value$(7) = MID$(Work$, 14, 2)      ' Receiving State Code
+    Value$(8) = MID$(Work$, 16, 2)      ' Receiving Division Code
+    Value$(9) = MID$(Work$, 18, 3)      ' Receiving Area Code
+    Value$(10) = MID$(Work$, 21, 3)     ' Receiving Storeroom Code
+    Value$(11) = MID$(Work$, 24, 2)     ' Status Code
+    Value$(12) = MID$(Work$, 26, 5)     ' Purchase Code
+    Value$(13) = MID$(Work$, 31, 1)     ' Previous Installed Indicator (Y/N)
+    Value$(14) = MID$(Work$, 32, 2)     ' Device Manufacturer Code
+    Value$(15) = MID$(Work$, 34, 5)     ' Device Code
+    Value$(16) = MID$(Work$, 39, 26)    ' Device Serial Number
+    Value$(17) = MID$(Work$, 65, 5)     ' Device Code (Accessory Device Only)
+    Value$(18) = MID$(Work$, 70, 2)     ' Accessory Type Code (Accessory Device Only)
+    Value$(19) = MID$(Work$, 72, 2)     ' Manufacturer Code (Accessory Device Only)
+    Value$(20) = MID$(Work$, 74, 4)     ' Battery Check Year (Associated Device Only)
+    Value$(21) = MID$(Work$, 78, 2)     ' Associated Manufacturer Code (Register Only)
+    Value$(22) = MID$(Work$, 80, 5)     ' Associated Device Code (Register Only)
+    Value$(23) = MID$(Work$, 85, 26)    ' Associated Device Serial Number (Register Only)
+    Value$(24) = MID$(Work$, 111, 8)    ' Tester Identification
+    Value$(25) = MID$(Work$, 119, 2)    ' Activity Type Code
+    Value$(26) = MID$(Work$, 121, 2)    ' Test Description Code (FD=Field, SH=Shop)
+    Value$(27) = MID$(Work$, 123, 8)    ' Test Date (mmddyyyy)
+    Value$(28) = MID$(Work$, 131, 1)    ' Test Occurance Number
+    Value$(29) = MID$(Work$, 132, 50)   ' Remarks Regarding Test
+    Value$(30) = MID$(Work$, 182, 2)    ' Retirement Reason Code
+    Value$(31) = MID$(Work$, 184, 1)    ' Repair Indicator (Y/N)
+    Value$(32) = MID$(Work$, 185, 2)    ' Damage Code One
+    Value$(33) = MID$(Work$, 187, 2)    ' Damage Code Two
+    Value$(34) = MID$(Work$, 189, 2)    ' Damage Code Three
+    Value$(35) = MID$(Work$, 191, 2)    ' Defect Code One
+    Value$(36) = MID$(Work$, 193, 2)    ' Defect Code Two
+    Value$(37) = MID$(Work$, 195, 2)    ' Defect Code Three
+    Value$(38) = MID$(Work$, 197, 1)    ' Meter Stop Indicator (Y/N)
+    Value$(39) = MID$(Work$, 198, 7)    ' Full Scale Demand
+    Value$(40) = MID$(Work$, 205, 10)   ' KW Reading As Found
+    Value$(41) = MID$(Work$, 215, 10)   ' KW Reading As Left
+    Value$(42) = MID$(Work$, 225, 10)   ' KWH Reading As Found
+    Value$(43) = MID$(Work$, 235, 10)   ' KWH Reading As Left
+    Value$(44) = MID$(Work$, 245, 4)    ' Seal Code As Found
+    Value$(45) = MID$(Work$, 249, 4)    ' Seal Code As Left
+    Value$(46) = MID$(Work$, 253, 5)    ' Series Percent Accuracy As Found - Full Load
+    Value$(47) = MID$(Work$, 258, 5)    ' Series Percent Accuracy As Found - Lag Load
+    Value$(48) = MID$(Work$, 263, 5)    ' Series Percent Accuracy As Found - Light Load
+    Value$(49) = MID$(Work$, 268, 5)    ' Series Percent Accuracy As Left - Full Load
+    Value$(50) = MID$(Work$, 273, 5)    ' Series Percent Accuracy As Left - Lag Load
+    Value$(51) = MID$(Work$, 278, 5)    ' Series Percent Accuracy As Left - Light Load
+    Value$(52) = MID$(Work$, 283, 7)    ' Standard ID Number
+    Value$(53) = MID$(Work$, 290, 5)    ' Timing Percent Accuracy As Found
+    Value$(54) = MID$(Work$, 295, 5)    ' Timing Percent Accuracy As Left
+    Value$(55) = MID$(Work$, 300, 3)    ' Timing Interval Length
+    Value$(56) = MID$(Work$, 303, 5)    ' Upscale Percent Accuracy As Found
+    Value$(57) = MID$(Work$, 308, 5)    ' Upscale Percent Accuracy As Left
+    Value$(58) = MID$(Work$, 313, 1)    ' Zero Code As Found
+    Value$(59) = MID$(Work$, 314, 1)    ' Zero Code As Left
+    Value$(60) = MID$(Work$, 315, 7)    ' Doble Test
+    Value$(61) = MID$(Work$, 322, 6)    ' Primary to Secondary Case Volts
+    Value$(62) = MID$(Work$, 328, 4)    ' Secondary to Primary Case Volts
+    Value$(63) = MID$(Work$, 332, 8)    ' Test Ratio
+    Value$(64) = MID$(Work$, 340, 4)    ' Test Burden
+    Value$(65) = MID$(Work$, 344, 4)    ' Secondary Amps
+    Value$(66) = MID$(Work$, 348, 4)    ' Secondary Volts
+    Value$(67) = MID$(Work$, 352, 5)    ' Ratio Correction Factor
+    Value$(68) = MID$(Work$, 357, 1)    ' Sign For Phase Angle Error (+/-)
+    Value$(69) = MID$(Work$, 358, 4)    ' Phase Angle Error
+    Value$(70) = MID$(Work$, 362, 3)    ' Test Accuracy Class
+    Value$(71) = MID$(Work$, 365, 1)    ' Polarity Mark Check (Y/N)
+    Value$(72) = MID$(Work$, 366, 1)    ' Transformer Demagnitize Indicator (Y/N)
+    Value$(73) = MID$(Work$, 367, 8)    ' PCB Level
+    Value$(74) = MID$(Work$, 375, 10)   ' Test Set Name Identification
+    Value$(75) = MID$(Work$, 385, 6)    ' Phase to Phase Accuracy (1 to 2)
+    Value$(76) = MID$(Work$, 391, 6)    ' Phase to Phase Accuracy (2 to 3)
+    Value$(77) = MID$(Work$, 397, 6)    ' Phase to Phase Accuracy (3 to 1)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parse Header Record
+'============================================================================
+SUB ParseHeaderRecord (Work$)
+'----------------------------------------------------------------------------
+    Work$ = Work$ + SPACE$(50)
+    Value$(1) = MID$(Work$, 1, 1)       ' Transaction Code
+    Value$(2) = MID$(Work$, 2, 2)       ' Company Code
+    Value$(3) = MID$(Work$, 4, 8)       ' Date
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Parse information from trailer record
+'============================================================================
+SUB ParseTrailerRecord (Work$)
+'----------------------------------------------------------------------------
+    Work$ = Work$ + SPACE$(50)
+    Value$(1) = MID$(Work$, 1, 1)       ' Transaction Code
+    Value$(2) = MID$(Work$, 2, 2)       ' Company Code
+    Value$(3) = MID$(Work$, 4, 5)       ' Test Record Count
+    Value$(4) = MID$(Work$, 9, 5)       ' Test/History Record Count
+    Value$(5) = MID$(Work$, 14, 5)      ' Physical Inventory Record Count
+    Value$(6) = MID$(Work$, 19, 5)      ' History Record Count
+    Value$(7) = MID$(Work$, 24, 5)      ' Transfer Record Count
+    Value$(8) = MID$(Work$, 29, 5)      ' Status Change Record Count
+    Value$(9) = MID$(Work$, 34, 5)      ' Battery Check Year Record Count
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints a line of hyphens
+'============================================================================
+SUB PrintaLine
+'----------------------------------------------------------------------------
+    PRINT #Outfile%, STRING$(65, "-")
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Decode and print data record
+'============================================================================
+SUB PrintDataRecord
+'----------------------------------------------------------------------------
+    PrintaLine
+   
+    Prtl "MDS Transaction Code:" + Value$(1)
+    Prtl "Company Code:" + Value$(2)
+    Prtl "State Code:" + Value$(3)
+    Prtl "Division Code:" + Value$(4)
+    Prtl "Area Code:" + Value$(5)
+    Prtl "Storeroom Number:" + Value$(6)
+    Prtl "Receiving State Code:" + Value$(7)
+    Prtl "Receiving Division Code:" + Value$(8)
+    Prtl "Receiving Area Code:" + Value$(9)
+    Prtl "Receiving Storeroom Code:" + Value$(10)
+    Prtl "Status Code:" + Value$(11)
+    Prtl "Purchase Code:" + Value$(12)
+    Prtl "Previous Installed Indicator (Y/N):" + Value$(13)
+    Prtl "Device Manufacturer Code:" + Value$(14)
+    Prtl "Device Code:" + Value$(15)
+    Prtl "Device Serial Number:" + Value$(16)
+    Prtl "Device Code (Accessory Device Only):" + Value$(17)
+    Prtl "Accessory Type Code (Accessory Device Only):" + Value$(18)
+    Prtl "Manufacturer Code (Accessory Device Only):" + Value$(19)
+    Prtl "Battery Check Year (Accessory Device Only):" + Value$(20)
+    Prtl "Associated Manufacturer Code (Register Only):" + Value$(21)
+    Prtl "Associated Device Code (Register Only):" + Value$(22)
+    Prtl "Associated Device Serial Number (Register Only):" + Value$(23)
+    Prtl "Tester Identification:" + Value$(24)
+    Prtl "Activity Type Code:" + Value$(25)
+    Prtl "Test Description Code (FD=Field, SH=Shop):" + Value$(26)
+    Prtl "Test Date (mmddyyyy):" + Value$(27)
+    Prtl "Test Occurance Number:" + Value$(28)
+    Prtl "Remarks Regarding Test:" + Value$(29)
+    Prtl "Retirement Reason Code:" + Value$(30)
+    Prtl "Repair Indicator (Y/N):" + Value$(31)
+    Prtl "Damage Code One:" + Value$(32)
+    Prtl "Damage Code Two:" + Value$(33)
+    Prtl "Damage Code Three:" + Value$(34)
+    Prtl "Defect Code One:" + Value$(35)
+    Prtl "Defect Code Two:" + Value$(36)
+    Prtl "Defect Code Three:" + Value$(37)
+    Prtl "Meter Stop Indicator (Y/N):" + Value$(38)
+    Prtl "Full Scale Demand:" + Value$(39)
+    Prtl "KW Reading As Found:" + Value$(40)
+    Prtl "KW Reading As Left:" + Value$(41)
+    Prtl "KWH Reading As Found:" + Value$(42)
+    Prtl "KWH Reading As Left:" + Value$(43)
+    Prtl "Seal Code As Found:" + Value$(44)
+    Prtl "Seal Code As Left:" + Value$(45)
+    Prtl "Series Percent Accuracy As Found - Full Load:" + Value$(46)           ' Series Percent Accuracy As Found - Full Load
+    Prtl "Series Percent Accuracy As Found - Lag Load:" + Value$(47)
+    Prtl "Series Percent Accuracy As Found - Light Load:" + Value$(48)
+    Prtl "Series Percent Accuracy As Left - Full Load:" + Value$(49)
+    Prtl "Series Percent Accuracy As Left - Lag Load:" + Value$(50)
+    Prtl "Series Percent Accuracy As Left - Light Load:" + Value$(51)
+    Prtl "Standard ID Number:" + Value$(52)
+    Prtl "Timing Percent Accuracy As Found:" + Value$(53)
+    Prtl "Timing Percent Accuracy As Left:" + Value$(54)
+    Prtl "Timing Interval Length:" + Value$(55)
+    Prtl "Upscale Percent Accuracy As Found:" + Value$(56)
+    Prtl "Upscale Percent Accuracy As Left:" + Value$(57)
+    Prtl "Zero Code As Found:" + Value$(58)
+    Prtl "Zero Code As Left:" + Value$(59)
+    Prtl "Doble Test:" + Value$(60)
+    Prtl "Primary to Secondary Case Volts:" + Value$(61)
+    Prtl "Secondary to Primary Case Volts:" + Value$(62)
+    Prtl "Test Ratio:" + Value$(63)
+    Prtl "Test Burden:" + Value$(64)
+    Prtl "Secondary Amps:" + Value$(65)
+    Prtl "Secondary Volts:" + Value$(66)
+    Prtl "Ratio Correction Factor:" + Value$(67)
+    Prtl "Sign For Phase Angle Error (+/-):" + Value$(68)
+    Prtl "Phase Angle Error:" + Value$(69)
+    Prtl "Test Accuracy Class:" + Value$(70)
+    Prtl "Polarity Mark Check (Y/N):" + Value$(71)
+    Prtl "Transformer Demagnitize Indicator (Y/N):" + Value$(72)
+    Prtl "PCB Level:" + Value$(73)
+    Prtl "Test Set Name Identification:" + Value$(74)
+    Prtl "Phase to Phase Accuracy (1 to 2):" + Value$(75)
+    Prtl "Phase to Phase Accuracy (2 to 3):" + Value$(76)
+    Prtl "Phase to Phase Accuracy (3 to 1):" + Value$(77)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print header record
+'============================================================================
+SUB PrintHeaderRecord
+'----------------------------------------------------------------------------
+    PrintaLine
+    Prtl "Header Record"
+    Prtl "Company Code:" + Value$(2)    ' Company Code
+    Prtl "File Date:" + Value$(3)       ' Date
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Print trailer record
+'============================================================================
+SUB PrintTrailerRecord
+'----------------------------------------------------------------------------
+    PrintaLine
+    Prtl "Trailer Record"
+    Prtl "Company Code:" + Value$(2)
+    Prtl Value$(3) + " Test Records"
+    Prtl Value$(4) + " Test/History Records"
+    Prtl Value$(5) + " Physical Inventory Records"
+    Prtl Value$(6) + " History Records"
+    Prtl Value$(7) + " Transfer Records"
+    Prtl Value$(8) + " Status Change Records"
+    Prtl Value$(9) + " Battery Check Year Records"
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints data to device/file. Appends cr/lf
+'============================================================================
+SUB Prtl (Work$)
+'----------------------------------------------------------------------------
+    PRINT #Outfile%, RTRIM$(Work$)
+'****************************************************************************
+END SUB
+

@@ -1,0 +1,707 @@
+'   $TITLE: 'CTCHECK - Check Data and Write Record'
+'   Version 9.00
+'============================================================================
+'   Transformer Record Data Entry System
+'   K. W. Kroninger
+'   American Electric Power
+'   Canton Meter Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   July, 1996
+'       Added code to properly handle all AEP Region Codes
+'============================================================================
+'   Define record type(s)
+'----------------------------------------------------------------------------
+'   Repair data record type
+'   This looks at the repair list record as it is received from Enable
+	TYPE RepairData
+		Serial AS STRING * 9        ' Device serial number
+		Code AS STRING * 5          ' Device code
+		Area AS STRING * 1          ' Actually, this is company now
+		Mfr AS STRING * 2           ' Who made it?
+		Ac AS STRING * 2
+	END TYPE
+'   Information record
+	TYPE InfoRecord
+		Number AS INTEGER           ' Number of records in data file
+		Signature AS STRING * 20    ' Can ID test facility
+	END TYPE
+'   The actual data record
+	TYPE DataRecord
+		Buffer AS STRING * 1000     ' The buffer to write to disk
+	END TYPE
+'============================================================================
+'   Declare functions and subprograms
+'----------------------------------------------------------------------------
+DECLARE FUNCTION AcCalc$ (Ratio$, Phase$, Alen%, Sign%)
+DECLARE FUNCTION AddSign$ (Work$, Alen%)
+DECLARE FUNCTION AllCheck% (x$, Check$)
+DECLARE FUNCTION CheckDate% (Value$)
+DECLARE FUNCTION CheckField% (Value$, Accept$)
+DECLARE SUB CheckRatio (Value$, ClrFlag%, LineNumber$)
+DECLARE FUNCTION CheckRegion% (V$)
+DECLARE SUB CheckRepairList (Value$(), Mfg%, Mbg%, Dfg%, Dbg%)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE SUB ErrMsg (Msg$, ClrFlag%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB MfrLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION OneDec% (Look$)
+DECLARE SUB PrtScrn (Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), Count%, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, Number%)
+DECLARE SUB Puts (Message$, Row%)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB RetireLookup (Value$, Vlen%, Eflag%, Estring$)
+DECLARE FUNCTION Round$ (Value$, Alen%)
+'============================================================================
+'   Dimension and common statements
+'   $INCLUDE: 'CTDIMCOM.INC'
+'----------------------------------------------------------------------------
+'   Direct access file definitions
+	DIM Info AS InfoRecord, DataRec AS DataRecord
+'============================================================================
+'   Version check
+	IF COMMAND$ <> "" AND LEFT$(UCASE$(LTRIM$(COMMAND$)), 1) = "V" THEN
+		PRINT "Current transformer Data Check Utility - Version 9.00"
+		END
+	END IF
+'============================================================================
+	ClrFlag% = 0                ' Screen has not been cleared
+	COLOR Mfg%, Mbg%            ' Screen color
+'============================================================================
+	ON ERROR GOTO NetProblem    ' Turn on network error handler
+'============================================================================
+'   Set up check strings
+	Num$ = "0123456789"
+	NumSp$ = Num$ + " "
+	Alpha$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	All$ = Alpha$ + NumSp$ + "-"
+	NumPer$ = NumSp$ + " ."
+	Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   The actual check routine
+'----------------------------------------------------------------------------
+'   Check device code.  First character must be a B or a C and all character
+'   positions must be filled.
+
+	IF AllCheck%(Value$(1), Alpha$ + Num$) = 1 OR INSTR("BC", LEFT$(Value$(1), 1)) = 0 THEN
+		ErrMsg "Error - Code", ClrFlag%
+	END IF
+
+'   Check activity code field.  Start by formatting field, then check for the
+'   only two acceptable values.
+
+	Value$(2) = RIGHT$(STRING$(Alen%(2), "00") + LTRIM$(RTRIM$(Value$(2))), Alen%(2))
+	IF Value$(2) <> "01" AND Value$(2) <> "04" THEN
+		ErrMsg "Error - Activity Code", ClrFlag%
+	END IF
+   
+'   Check Serial Number.  Mostly just check that characters are alphanumberic
+'   and that serial number has been input.
+
+	Value$(3) = LTRIM$(RTRIM$(Value$(3)))
+   
+	WHILE LEFT$(Value$(3), 1) = "0" AND LEN(Value$(3)) > 1
+		Value$(3) = MID$(Value$(3), 2)
+	WEND
+
+	Value$(3) = LEFT$(Value$(3) + SPACE$(Alen%(3)), Alen%(3))
+
+	IF AllCheck%(Value$(3), All$) = 1 OR LTRIM$(RTRIM$(Value$(3))) = "" THEN
+		ErrMsg "Error - Serial Number", ClrFlag%
+	END IF
+
+'   Check Mfr code.  Formatting is handled by the called procedure and a
+'   lookup table is used to assure compliance with MDS.
+
+	MfrLookup Value$(4), Alen%(4), Flag%, " "
+
+	IF AllCheck%(Value$(4), Alpha$ + Num$) = 1 OR Flag% = 1 THEN
+		ErrMsg "Error - Manufacturer", ClrFlag%
+	END IF
+
+'   Check Dielectric Check.  Actually just jam in a Y.
+
+	Value$(9) = "Y"
+   
+'   Check Region code against lookup table for compliance with MDS.
+
+	Value$(10) = LEFT$(UCASE$(Value$(10)) + SPACE$(Alen%(10)), Alen%(10))
+   
+	IF CheckRegion%(Value$(10)) THEN
+		ErrMsg "Error - Region", ClrFlag%
+	END IF
+
+'   Check Tester Identification.  Just checks for letters.
+
+	IF AllCheck%(Value$(11), Alpha$) = 1 THEN
+		ErrMsg "Error - Tester ID", ClrFlag%
+	END IF
+
+'   Check Retire Reason Code.  Changed to do MRDES II/TRDES retirement code
+'   check - July, 1993.  e$ and Flag% are needed to use an existing procedure
+'   that sets a flag and an error string and works.  Flag% is used for test
+'   after sub call.
+
+	Flag% = 0
+	
+	RetireLookup Value$(12), Alen%(12), Flag%, " "
+   
+	IF Flag% = 1 THEN
+		ErrMsg "Error - Retirement Reason Code", ClrFlag%
+	END IF
+
+'   Check Rating Factor.  Character check only.
+
+	IF AllCheck%(Value$(14), NumPer$) = 1 THEN
+		ErrMsg "Error - Rating Factor", ClrFlag%
+	END IF
+
+'   Check Ratio.  Character check only.
+
+	IF AllCheck%(Value$(15), NumPer$ + "/:") = 1 THEN
+		ErrMsg "Error - Ratio", ClrFlag%
+	END IF
+
+'   Check Maximum Burden. Character check only.
+
+	IF AllCheck%(Value$(16), All$ + ".") = 1 THEN
+		ErrMsg "Error - Maximum Burden", ClrFlag%
+	END IF
+
+'----------------------------------------------------------------------------
+'   Line 1 through 6 refer to the line numbers in the data area on the screen.
+'----------------------------------------------------------------------------
+
+'   Amps line 1. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(17), NumPer$) THEN
+		ErrMsg "Error - Amps line 1", ClrFlag%
+	END IF
+
+'   Amps line 2. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(18), NumPer$) THEN
+		ErrMsg "Error - Amps line 2", ClrFlag%
+	END IF
+
+'   Amps line 3. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(19), NumPer$) THEN
+		ErrMsg "Error - Amps line 3", ClrFlag%
+	END IF
+
+'   Amps line 4. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(20), NumPer$) THEN
+		ErrMsg "Error - Amps line 4", ClrFlag%
+	END IF
+
+'   Amps line 5. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(21), NumPer$) THEN
+		ErrMsg "Error - Amps line 5", ClrFlag%
+	END IF
+
+'   Amps line 6. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(22), NumPer$) THEN
+		ErrMsg "Error - Amps line 6", ClrFlag%
+	END IF
+
+'   Burden line 1. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(23), All$ + ".") THEN
+		ErrMsg "Error - Burden line 1", ClrFlag%
+	END IF
+
+'   Burden line 2. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(24), All$ + ".") THEN
+		ErrMsg "Error - Burden line 2", ClrFlag%
+	END IF
+
+'   Burden line 3. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(25), All$ + ".") THEN
+		ErrMsg "Error - Burden line 3", ClrFlag%
+	END IF
+
+'   Burden line 4. Character and no more than one decimal point check.
+   
+	IF CheckField%(Value$(26), All$ + ".") THEN
+		ErrMsg "Error - Burden line 4", ClrFlag%
+	END IF
+
+'   Burden line 5. Character and no more than one decimal point check.
+
+	IF CheckField%(Value$(27), All$ + ".") THEN
+		ErrMsg "Error - Burden line 5", ClrFlag%
+	END IF
+
+'   Burden line 6. Character and no more than one decimal point check.
+   
+	IF CheckField%(Value$(28), All$ + ".") THEN
+		ErrMsg "Error - Burden line 6", ClrFlag%
+	END IF
+
+'   Ratio line 1. Character check, no more than one decimal point check, out
+'   of limits check.
+
+	IF CheckField%(Value$(30), NumPer$) THEN
+		ErrMsg "Error - Ratio line 1", ClrFlag%
+	END IF
+   
+	Value$(30) = Round$((Value$(30)), Alen%(30))
+   
+	CheckRatio Value$(30), ClrFlag%, "Line 1"
+
+'   Phase Error line 1.  Character and no more than one decimal point check,
+'   round to two decimal points, add sign symbol if needed.
+
+	IF CheckField%(Value$(31), NumPer$ + "+-") THEN
+		ErrMsg "Error - Phase Error line 1", ClrFlag%
+	END IF
+   
+	Value$(31) = AddSign$(Round$((Value$(31)), Alen%(31)), Alen%(31))
+
+'   Accuracy Class line 1.  Calculate the accuracy class, if necessary and
+'   possible, round to two decimal places.
+   
+	IF Value$(32) = SPACE$(Alen%(32)) THEN
+		IF Value$(30) <> SPACE$(Alen%(30)) THEN
+			IF Value$(31) <> SPACE$(Alen%(31)) THEN
+				Value$(32) = AcCalc$(Value$(30), Value$(31), Alen%(32), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(32), NumPer$) THEN
+		ErrMsg "Error - Accuracy Class line 1", ClrFlag%
+	END IF
+   
+	Value$(32) = Round$((Value$(32)), Alen%(32))
+
+'   Ratio line 2. Character check, no more than one decimal point check, out
+'   of limits check.
+   
+	IF CheckField%(Value$(34), NumPer$) THEN
+		ErrMsg "Error - Ratio line 2", ClrFlag%
+	END IF
+   
+	Value$(34) = Round$((Value$(34)), Alen%(34))
+
+	CheckRatio Value$(34), ClrFlag%, "Line 2"
+
+'   Phase Error line 2.  Character and no more than one decimal point check,
+'   round to two decimal points, add sign symbol if needed.
+
+	IF CheckField%(Value$(35), NumPer$ + "+-") THEN
+		ErrMsg "Error - Phase Error line 2", ClrFlag%
+	END IF
+   
+	Value$(35) = AddSign$(Round$((Value$(35)), Alen%(35)), Alen%(35))
+
+'   Accuracy Class line 2. Calculate the accuracy class, if necessary and
+'   possible, round to two decimal places.
+
+	IF Value$(36) = SPACE$(Alen%(36)) THEN
+		IF Value$(34) <> SPACE$(Alen%(34)) THEN
+			IF Value$(35) <> SPACE$(Alen%(35)) THEN
+				Value$(36) = AcCalc$(Value$(34), Value$(35), Alen%(36), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(36), NumPer$) THEN
+		ErrMsg "Error - Accuracy Class line 2", ClrFlag%
+	END IF
+   
+	Value$(36) = Round$((Value$(36)), Alen%(36))
+
+'   Ratio line 3. Character check, no more than one decimal point check, out
+'   of limits check.
+   
+	IF CheckField%(Value$(38), NumPer$) THEN
+		ErrMsg "Error - Ratio line 3", ClrFlag%
+	END IF
+   
+	Value$(38) = Round$((Value$(38)), Alen%(38))
+
+	CheckRatio Value$(38), ClrFlag%, "Line 3"
+
+'   Phase Error line 3.  Character and no more than one decimal point check,
+'   round to two decimal points, add sign symbol if needed.
+   
+	IF CheckField%(Value$(39), NumPer$ + "+-") THEN
+		ErrMsg "Error - Phase Error line 3", ClrFlag%
+	END IF
+	Value$(39) = AddSign$(Round$((Value$(39)), Alen%(39)), Alen%(39))
+
+'   Accuracy Class line 3. Calculate the accuracy class, if necessary and
+'   possible, round to two decimal places.
+
+	IF Value$(40) = SPACE$(Alen%(40)) THEN
+		IF Value$(38) <> SPACE$(Alen%(38)) THEN
+			IF Value$(39) <> SPACE$(Alen%(39)) THEN
+				Value$(40) = AcCalc$(Value$(38), Value$(39), Alen%(40), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(40), NumPer$) THEN
+		ErrMsg "Error - Accuracy Class line 3", ClrFlag%
+	END IF
+   
+	Value$(40) = Round$((Value$(40)), Alen%(40))
+
+'   Ratio line 4. Character check, no more than one decimal point check, out
+'   of limits check.
+   
+	IF CheckField%(Value$(42), NumPer$) THEN
+		ErrMsg "Error - Ratio line 4", ClrFlag%
+	END IF
+   
+	Value$(42) = Round$((Value$(42)), Alen%(42))
+
+	CheckRatio Value$(42), ClrFlag%, "Line 4"
+
+'   Phase Error line 4.  Character and no more than one decimal point check,
+'   round to two decimal points, add sign symbol if needed.
+   
+	IF CheckField%(Value$(43), NumPer$ + "+-") THEN
+		ErrMsg "Error - Phase Error line 4", ClrFlag%
+	END IF
+   
+	Value$(43) = AddSign$(Round$((Value$(43)), Alen%(43)), Alen%(43))
+
+'   Accuracy Class line 4. Calculate the accuracy class, if necessary and
+'   possible, round to two decimal places.
+
+	IF Value$(44) = SPACE$(Alen%(44)) THEN
+		IF Value$(42) <> SPACE$(Alen%(42)) THEN
+			IF Value$(43) <> SPACE$(Alen%(43)) THEN
+				Value$(44) = AcCalc$(Value$(42), Value$(43), Alen%(44), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(44), NumPer$) THEN
+		ErrMsg "Error - Accuracy Class line 4", ClrFlag%
+	END IF
+   
+	Value$(44) = Round$((Value$(44)), Alen%(44))
+
+'   Ratio line 5. Character check, no more than one decimal point check, out
+'   of limits check.
+   
+	IF CheckField%(Value$(46), NumPer$) THEN
+		ErrMsg "Error - Ratio line 5", ClrFlag%
+	END IF
+   
+	Value$(46) = Round$((Value$(46)), Alen%(46))
+
+	CheckRatio Value$(46), ClrFlag%, "Line 5"
+
+'   Phase Error line 5.  Character and no more than one decimal point check,
+'   round to two decimal points, add sign symbol if needed.
+   
+	IF CheckField%(Value$(47), NumPer$ + "+-") THEN
+		ErrMsg "Error - Phase Error line 5", ClrFlag%
+	END IF
+   
+	Value$(47) = AddSign$(Round$((Value$(47)), Alen%(47)), Alen%(47))
+
+'   Accuracy Class line 5. Calculate the accuracy class, if necessary and
+'   possible, round to two decimal places.
+
+	IF Value$(48) = SPACE$(Alen%(48)) THEN
+		IF Value$(46) <> SPACE$(Alen%(46)) THEN
+			IF Value$(47) <> SPACE$(Alen%(47)) THEN
+				Value$(48) = AcCalc$(Value$(46), Value$(47), Alen%(48), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(48), NumPer$) THEN
+		ErrMsg "Error - Accuracy Class line 5", ClrFlag%
+	END IF
+   
+	Value$(48) = Round$((Value$(48)), Alen%(48))
+
+'   Ratio line 6. Character check, no more than one decimal point check, out
+'   of limits check.
+   
+	IF CheckField%(Value$(50), NumPer$) THEN
+		ErrMsg "Error - Ratio line 6", ClrFlag%
+	END IF
+   
+	Value$(50) = Round$((Value$(50)), Alen%(50))
+
+	CheckRatio Value$(50), ClrFlag%, "Line 6"
+
+'   Phase Error line 6.  Character and no more than one decimal point check,
+'   round to two decimal points, add sign symbol if needed.
+   
+	IF CheckField%(Value$(51), NumPer$ + "+-") THEN
+		ErrMsg "Error - Phase Error line 6", ClrFlag%
+	END IF
+   
+	Value$(51) = AddSign$(Round$((Value$(51)), Alen%(51)), Alen%(51))
+
+'   Accuracy Class line 6. Calculate the accuracy class, if necessary and
+'   possible, round to two decimal places.
+
+	IF Value$(52) = SPACE$(Alen%(52)) THEN
+		IF Value$(50) <> SPACE$(Alen%(50)) THEN
+			IF Value$(51) <> SPACE$(Alen%(51)) THEN
+				Value$(52) = AcCalc$(Value$(50), Value$(51), Alen%(52), -1)
+			END IF
+		END IF
+	END IF
+   
+	IF CheckField%(Value$(52), NumPer$) THEN
+		ErrMsg "Error - Accuracy Class line 6", ClrFlag%
+	END IF
+   
+	Value$(52) = Round$((Value$(52)), Alen%(52))
+
+'   Check Test Date.  Checks for date compliance with Gregorian Calendar and
+'   date format in compliance with MDS.
+   
+	IF CheckDate%(Value$(53)) THEN
+		ErrMsg "Error - Test Date", ClrFlag%
+	END IF
+
+'   Check damage and defect codes.  Check for acceptable codes and same code
+'   not appearing more than once.  Also packs code(s) to the first fields,
+'   and sorts them if there's more than one.
+
+	FOR x% = 55 TO 60
+		IF Value$(x%) <> SPACE$(Alen%(x%)) THEN
+			Value$(x%) = RIGHT$("00" + LTRIM$(RTRIM$(Value$(x%))), Alen%(x%))
+			IF AllCheck%(Value$(x%), Num$) THEN
+				IF x% < 58 THEN
+					ErrMsg "Error - Damage code", ClrFlag%
+				ELSE
+					ErrMsg "Error - Defect code", ClrFlag%
+				END IF  ' Damage or defect code
+			END IF      ' Invalid character
+		END IF          ' Data field is not blank
+	NEXT                ' Damage/Defect codes
+
+'   Check for same damage/defect code entered more then once
+
+	IF Value$(55) = "  " AND Value$(56) <> "  " THEN
+		SWAP Value$(55), Value$(56)
+	END IF
+   
+	IF Value$(56) = "  " AND Value$(57) <> "  " THEN
+		SWAP Value$(56), Value$(57)
+		IF Value$(55) = "  " AND Value$(56) <> "  " THEN
+			SWAP Value$(55), Value$(56)
+		END IF
+	END IF
+   
+	IF Value$(56) <> "  " AND Value$(55) = Value$(56) THEN
+		ErrMsg "Duplicate damage codes", ClrFlag%
+	END IF
+   
+	IF Value$(57) <> "  " AND (Value$(55) = Value$(57) OR Value$(56) = Value$(57)) THEN
+		ErrMsg "Duplicate damage codes", ClrFlag%
+	END IF
+		 
+	IF Value$(58) = "  " AND Value$(59) <> "  " THEN
+		SWAP Value$(58), Value$(59)
+	END IF
+   
+	IF Value$(59) = "  " AND Value$(60) <> "  " THEN
+		SWAP Value$(59), Value$(60)
+		IF Value$(58) = "  " AND Value$(59) <> "  " THEN
+			SWAP Value$(58), Value$(59)
+		END IF
+	END IF
+   
+	IF Value$(59) <> "  " AND Value$(58) = Value$(59) THEN
+		ErrMsg "Duplicate defect codes", ClrFlag%
+	END IF
+   
+	IF Value$(60) <> "  " AND (Value$(58) = Value$(60) OR Value$(59) = Value$(60)) THEN
+		ErrMsg "Duplicate defect codes", ClrFlag%
+	END IF
+	   
+'----------------------------------------------------------------------------
+'   Now cross check with STS tracking list.
+
+	IF LTRIM$(RTRIM$(Value$(2))) = "" AND ClrFlag% = 0 THEN
+		CheckRepairList Value$(), Mfg%, Mbg%, Dfg%, Dbg%
+	END IF
+
+'============================================================================
+'   Done with checks. Write it?
+
+	IF ClrFlag% = 1 THEN
+		GOTO WaitForUser
+	END IF
+
+'   If it's check only, just return
+
+	IF Flag% = 1 THEN
+		CallPrg% = 2
+		CHAIN "CTDATA"
+	END IF
+'============================================================================
+'   All checks passed.  Write it?
+
+	PrtScrn Prow%(), Pcol%(), Prompt$(), Arow%(), Acol%(), Value$(), 60, Company$, Facility$, Mfg%, Mbg%, Dfg%, Dbg%, 60
+   
+	COLOR Mfg%, Mbg%
+   
+	x$ = Get1Key$("YN", "Data checks OK.  Write it? (Y/N)")
+   
+	IF x$ = "N" THEN
+		CallPrg% = 2
+		CHAIN "CTDATA"
+	END IF
+'============================================================================
+'   Put the data into the buffer, and write the record
+'   Establish string
+
+	Buffer$ = SPACE$(1000)
+'============================================================================
+'   ID record type
+'   Current Transformers are record type 1
+
+	MID$(Buffer$, 1, 1) = "1"
+'============================================================================
+'   Put the data in the buffer
+'----------------------------------------------------------------------------
+	MID$(Buffer$, 2, Alen%(1)) = Value$(1)      '   Device Code
+	MID$(Buffer$, 991, Alen%(2)) = Value$(2)    '   Activity Code
+	MID$(Buffer$, 453, Alen%(3)) = Value$(3)    '   Mfr Serial Number
+	MID$(Buffer$, 28, Alen%(4)) = Value$(4)     '   Mfr Code
+	MID$(Buffer$, 33, Alen%(5)) = Value$(5)     '   Mfr Type
+	MID$(Buffer$, 481, Alen%(6)) = Value$(6)    '   Voltage Rating
+	MID$(Buffer$, 66, Alen%(9)) = Value$(9)     '   Dielectric Check
+	MID$(Buffer$, 901, Alen%(10)) = Value$(10)  '   Division Code
+	MID$(Buffer$, 71, Alen%(11)) = Value$(11)   '   Tester
+	MID$(Buffer$, 479, Alen%(12)) = Value$(12)  '   Retire reason code
+	MID$(Buffer$, 75, Alen%(13)) = Value$(13)   '   Remarks
+	MID$(Buffer$, 151, Alen%(14)) = Value$(14)  '   Rating Factor
+	MID$(Buffer$, 155, Alen%(15)) = Value$(15)  '   Ratio
+	MID$(Buffer$, 162, Alen%(16)) = Value$(16)  '   Maximum Burden
+	MID$(Buffer$, 165, Alen%(17)) = Value$(17)  '   Amps line 1
+	MID$(Buffer$, 170, Alen%(18)) = Value$(18)  '   Amps line 2
+	MID$(Buffer$, 175, Alen%(19)) = Value$(19)  '   Amps line 3
+	MID$(Buffer$, 195, Alen%(20)) = Value$(20)  '   Amps line 4
+	MID$(Buffer$, 200, Alen%(21)) = Value$(21)  '   Amps line 5
+	MID$(Buffer$, 205, Alen%(22)) = Value$(22)  '   Amps line 6
+	MID$(Buffer$, 210, Alen%(23)) = Value$(23)  '   Burden line 1
+	MID$(Buffer$, 213, Alen%(24)) = Value$(24)  '   Burden line 2
+	MID$(Buffer$, 216, Alen%(25)) = Value$(25)  '   Burden line 3
+	MID$(Buffer$, 228, Alen%(26)) = Value$(26)  '   Burden line 4
+	MID$(Buffer$, 231, Alen%(27)) = Value$(27)  '   Burden line 5
+	MID$(Buffer$, 234, Alen%(28)) = Value$(28)  '   Burden line 6
+	MID$(Buffer$, 243, Alen%(30)) = Value$(30)  '   Ratio line 1
+	MID$(Buffer$, 249, Alen%(31)) = Value$(31)  '   Phase Error line 1
+	MID$(Buffer$, 255, Alen%(32)) = Value$(32)  '   Accuracy Class line 1
+	MID$(Buffer$, 267, Alen%(34)) = Value$(34)  '   Ratio line 2
+	MID$(Buffer$, 273, Alen%(35)) = Value$(35)  '   Phase Error line 2
+	MID$(Buffer$, 279, Alen%(36)) = Value$(36)  '   Accuracy Class line 2
+	MID$(Buffer$, 291, Alen%(38)) = Value$(38)  '   Ratio line 3
+	MID$(Buffer$, 297, Alen%(39)) = Value$(39)  '   Phase Error line 3
+	MID$(Buffer$, 303, Alen%(40)) = Value$(40)  '   Accuracy Class line 3
+	MID$(Buffer$, 387, Alen%(42)) = Value$(42)  '   Ratio line 4
+	MID$(Buffer$, 393, Alen%(43)) = Value$(43)  '   Phase Error line 4
+	MID$(Buffer$, 399, Alen%(44)) = Value$(44)  '   Accuracy Class line 4
+	MID$(Buffer$, 411, Alen%(46)) = Value$(46)  '   Ratio line 5
+	MID$(Buffer$, 417, Alen%(47)) = Value$(47)  '   Phase Error line 5
+	MID$(Buffer$, 423, Alen%(48)) = Value$(48)  '   Accuracy Class line 5
+	MID$(Buffer$, 435, Alen%(50)) = Value$(50)  '   Ratio line 6
+	MID$(Buffer$, 441, Alen%(51)) = Value$(51)  '   Phase Error line 6
+	MID$(Buffer$, 447, Alen%(52)) = Value$(52)  '   Accuracy Class line 6
+	MID$(Buffer$, 125, Alen%(53)) = Value$(53)  '   Test Date
+	MID$(Buffer$, 133, Alen%(54)) = Value$(54)  '   Price
+	MID$(Buffer$, 601, Alen%(55)) = Value$(55)  '   Damage code 1
+	MID$(Buffer$, 603, Alen%(56)) = Value$(56)  '   Damage code 2
+	MID$(Buffer$, 605, Alen%(57)) = Value$(57)  '   Damage code 3
+	MID$(Buffer$, 607, Alen%(58)) = Value$(58)  '   Defect code 1
+	MID$(Buffer$, 609, Alen%(59)) = Value$(59)  '   Defect code 2
+	MID$(Buffer$, 611, Alen%(60)) = Value$(60)  '   Defect code 3
+	MID$(Buffer$, 993, 8) = TIME$               '   Time Stamp
+'============================================================================
+'   Write the record to the disk
+   
+	Buffer% = FREEFILE
+	OPEN FileName$ FOR RANDOM AS #Buffer% LEN = LEN(DataRec)
+  
+'   Grab the index record
+
+	GET #Buffer%, 1, Info
+	RecNum% = Info.Number
+   
+	DataRec.Buffer = Buffer$
+
+'   If we're editing a record, put it back in place.  If it's a new
+'   record, append it to the file, and update the information record.
+
+	IF EdRec% > 0 THEN
+		RecNum% = EdRec%
+	ELSE
+		RecNum% = RecNum% + 1
+	END IF
+   
+	PUT #Buffer%, RecNum% + 1, DataRec
+  
+'   If we've appended the record, update the information record
+
+	IF EdRec% = 0 THEN
+		Info.Number = RecNum%
+		Info.Signature = "TRDES"
+		PUT #Buffer%, 1, Info
+	END IF
+	CLOSE #Buffer%
+'============================================================================
+'   And exit to the data input
+'   Set flag to indicate what was done.
+
+	IF EdRec% > 0 THEN
+		CallPrg% = 1
+	ELSE
+		CallPrg% = 4
+	END IF
+	CHAIN "CTDATA"
+'============================================================================
+'   It's bad.
+
+WaitForUser:
+	x$ = Get1Key$(CHR$(13), "Press ENTER to return to edit screen")
+
+Split:
+	CallPrg% = 2
+	CHAIN "CTDATA"
+'============================================================================
+'   Network Problems
+
+NetProblem:
+   
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+   
+	ELSE
+
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+	   
+	END IF
+   
+	IF Junk$ = CHR$(27) THEN
+		RESUME Split
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of Ctcheck.Bas main module
+'****************************************************************************
+

@@ -1,0 +1,40 @@
+'   $title:'PURCHASE - Touches up Enable purchase code lookup info'
+'   K.W.Kroninger
+'   Ohio Power Company
+'   Protection and Measurements Electronics Lab
+'   July, 1991
+'   Version 0.40
+'============================================================================
+'   Enable will not write spaces at the end of a string being reported to an
+'   output file.  This program corrects for that deficiency.
+'============================================================================
+'   Define record template
+    TYPE Record
+        Buffer AS STRING * 59
+    END TYPE
+'============================================================================
+'   Dimension record variable
+    DIM Buffer AS Record
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+    InBuff% = FREEFILE
+    OPEN "PURCHASE.ASC" FOR INPUT AS #InBuff%
+    IF COMMAND$ = "" THEN
+        OutFile$ = "PURCHASE"
+    ELSE
+        OutFile$ = LTRIM$(RTRIM$(COMMAND$))
+    END IF
+    OutBuff% = FREEFILE
+    OPEN OutFile$ FOR RANDOM AS #OutBuff% LEN = LEN(Buffer)
+    Counter% = 0
+    DO
+        INPUT #InBuff%, Work$
+        Buffer.Buffer = Work$
+        Counter% = Counter% + 1
+        PUT #OutBuff%, Counter%, Buffer
+    LOOP UNTIL EOF(InBuff%)
+    CLOSE
+'****************************************************************************
+'   End of program
+'****************************************************************************
+

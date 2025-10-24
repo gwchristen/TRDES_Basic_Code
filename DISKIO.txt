@@ -1,0 +1,290 @@
+'   $title:'DISKIO - Misc disk I/O functions'
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'   Version 1.00
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   (No changes in past year)
+'============================================================================
+'   Define Record Types
+'----------------------------------------------------------------------------
+   TYPE FileFindBuf                   'DTA Buffer
+      DOS            AS STRING * 19   'first 20 bytes reserved
+      CreateTime     AS STRING * 1    'by DOS
+      Attributes     AS INTEGER       'Attribute of file
+      AccessTime     AS INTEGER       'Last access time of file
+      AccessDate     AS INTEGER       'Last access date of file
+      FileSize       AS LONG          'Size of file in bytes
+      FileName       AS STRING * 13   'File name XXXXXXXX.XXX
+   END TYPE
+'----------------------------------------------------------------------------
+'   Define the type needed for INTERRUPT
+'   This one does not handle the segment registers.
+    TYPE RegType
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+    END TYPE
+'----------------------------------------------------------------------------
+    TYPE TheFileName
+        FileName AS STRING * 13
+    END TYPE
+'----------------------------------------------------------------------------
+   TYPE Register                      'Type for CALL Interrupt
+        Ax    AS INTEGER
+        Bx    AS INTEGER
+        Cx    AS INTEGER
+        Dx    AS INTEGER
+        Bp    AS INTEGER
+        Si    AS INTEGER
+        Di    AS INTEGER
+        Flags AS INTEGER
+        Ds    AS INTEGER
+        es    AS INTEGER
+   END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB InitBuf (Buffer AS ANY)
+DECLARE FUNCTION NetFlag$ (FlagNumber%, Funct%, ReqValue$, NewValue$, Drive$)
+DECLARE FUNCTION DateBack% (OldName$)
+DECLARE FUNCTION FirstFM% (Path$, FA%)
+DECLARE SUB INTERRUPT (intnum AS INTEGER, InReg AS RegType, OutReg AS RegType)
+DECLARE SUB INTERRUPTX (intnum AS INTEGER, InReg AS Register, OutReg AS Register)
+DECLARE SUB LoadLookupFile (FileName$, Sel%, Select$(), Title$)
+'============================================================================
+    Programmer$ = "K.W.Kroninger"
+'****************************************************************************
+'   End of Diskio.Bas main module
+'****************************************************************************
+
+'****************************************************************************
+'   Appends explicit EOF character to data file specified in FileName$.
+'============================================================================
+SUB AppendEOF (FileName$)
+'----------------------------------------------------------------------------
+    Buffer% = FREEFILE
+    OPEN FileName$ FOR BINARY AS #Buffer%
+    SEEK #Buffer%, LOF(Buffer%) + 1
+    Eof$ = CHR$(26)
+    PUT #Buffer%, , Eof$
+    CLOSE #Buffer%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Renames file identifed by OldName$ to a name based on the system date.
+'   Allows up to 26 backups per day.  First backup file has an "A" appended
+'   to the date, the last possible a "Z".  Returns 0 on success, 1 on failure.
+'============================================================================
+FUNCTION DateBack% (OldName$)
+'----------------------------------------------------------------------------
+    NewName$ = RIGHT$(DATE$, 2) + LEFT$(DATE$, 2) + MID$(DATE$, 4, 2)
+    Alpha$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    Pointer% = 0
+    IF INSTR(OldName$, "\") > 0 THEN
+        OldPath$ = OldName$
+        WHILE LEN(OldPath$) > 1 AND RIGHT$(OldPath$, 1) <> "\"
+            OldPath$ = LEFT$(OldPath$, LEN(OldPath$) - 1)
+        WEND
+    ELSE
+        OldPath$ = ""
+    END IF
+
+    DO
+        Pointer% = Pointer% + 1
+        IF Pointer% > 26 THEN
+            EXIT DO
+        END IF
+        WorkName$ = NewName$ + MID$(Alpha$, Pointer%, 1)
+        FileBuffer% = FREEFILE
+        OPEN OldPath$ + WorkName$ FOR BINARY AS #FileBuffer%
+        Test& = LOF(FileBuffer%)
+        CLOSE #FileBuffer%
+    LOOP UNTIL Test& = 0
+  
+    KILL OldPath$ + WorkName$
+
+    IF Pointer% > 26 THEN
+        DateBack% = 1
+        EXIT FUNCTION
+    END IF
+    OldName$ = LTRIM$(RTRIM$(OldName$))
+    IF OldName$ = "" THEN
+        CLS
+        PRINT "USEAGE: DATEBACK <filename>"
+        END
+    END IF
+    Cmd$ = "rename " + OldName$ + " " + WorkName$
+    SHELL Cmd$
+    OldName$ = WorkName$
+    DateBack% = 0
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Find First Match.  Returns zero if successful.
+'============================================================================
+FUNCTION FirstFM% (Path$, FA%)
+'----------------------------------------------------------------------------
+
+   DIM InRegX AS Register, OutRegX AS Register
+   DIM WorkFileName AS TheFileName
+
+   InRegX.Ax = &H4E00
+   InRegX.Cx = FA%
+   WorkFileName.FileName = Path$ + CHR$(0)
+   InRegX.Dx = VARPTR(WorkFileName)
+   InRegX.Ds = VARSEG(WorkFileName)
+   INTERRUPTX &H21, InRegX, OutRegX              'Find First Match
+
+   FirstFM% = (OutRegX.Ax AND &HF)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   InitBuf initializes the DTA buffer.
+'============================================================================
+SUB InitBuf (Buffer AS FileFindBuf) STATIC
+'----------------------------------------------------------------------------
+
+'    The first 20 bytes are reserved for DOS and are unchanged.
+   
+     Buffer.CreateTime = " "
+     Buffer.Attributes = 0
+     Buffer.AccessTime = 0
+     Buffer.AccessDate = 0
+     Buffer.FileSize = 0
+     Buffer.FileName = STRING$(13, 32)
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Loads a lookup file.  File must be in MRDES II file lookup format.
+'   First line is screen title.
+'   If a line starts with a semicolon or is blank, it is a comment.
+'   Any non blank line that does not start with a semicolon is data.
+'============================================================================
+SUB LoadLookupFile (FileName$, Sel%, Select$(), Title$)
+'----------------------------------------------------------------------------
+    Sel% = 0
+    Lookup% = FREEFILE
+    OPEN FileName$ FOR INPUT AS #Lookup%
+    LINE INPUT #Lookup%, Title$
+    DO
+        LINE INPUT #Lookup%, Work$
+        Work$ = LTRIM$(RTRIM$(Work$))
+        IF Work$ <> "" AND LEFT$(Work$, 1) <> ";" THEN
+            Sel% = Sel% + 1
+            Select$(Sel%) = Work$
+        END IF
+    LOOP UNTIL EOF(Lookup%)
+    CLOSE #Lookup%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   This function is part of the kludge to use Basic programs on the net.
+'   Sets/Reports status of network access flags.
+'   FlagNumber% - Flag to be set/reported
+'   Funct% ---- Action to be preformed
+'          ---- 0 - Report flag value
+'          ---- 1 - Set flag value to NewValue$
+'          ---- 2 - Set flag value to NewValue$ only if Flag=ReqValue$
+'   ReqValue$ - Required flag value for function  2
+'             - Pass null value for other actions
+'   NewValue$ - New flag value for functions 1 and 2
+'             - Pass null value for report action
+'   Drive$ ---- Null for local drive, drive designator if not default drive.
+'----------------------------------------------------------------------------
+'   Return values:
+'       Success returns flag value (single character)
+'       Failures return two characters
+'           00 = Bad flag number
+'           01 = Bad function code
+'           02 = Unacceptable Required Value
+'           03 = Unacceptable New Value
+'           04 = Flag value did not match required value
+'============================================================================
+FUNCTION NetFlag$ (FlagNumber%, Funct%, ReqValue$, NewValue$, Drive$)
+'----------------------------------------------------------------------------
+    IF FlagNumber% < 0 OR FlagNumber% > 80 THEN
+        NetFlag$ = "00"
+        EXIT FUNCTION
+    END IF
+    IF Funct% < 0 OR Funct% > 2 THEN
+        NetFlag$ = "01"
+        EXIT FUNCTION
+    END IF
+    IF Funct% = 2 AND (ReqValue$ = "" OR ASC(ReqValue$) < 32 OR ASC(ReqValue$) > 254) THEN
+        NetFlag$ = "02"
+        EXIT FUNCTION
+    END IF
+    IF Funct% > 0 AND (NewValue$ = "" OR ASC(NewValue$) < 32 OR ASC(NewValue$) > 254 OR LEN(NewValue$) <> 1) THEN
+        NetFlag$ = "03"
+        EXIT FUNCTION
+    END IF
+  
+    FlagFile% = FREEFILE
+
+    IF LTRIM$(RTRIM$(Drive$)) = "" THEN
+        FileName$ = "\netflags"
+    ELSE
+        FileName$ = LTRIM$(RTRIM$(Drive$)) + ":\netflags"
+    END IF
+
+    OPEN FileName$ FOR BINARY AS #FlagFile%
+  
+    f$ = CHR$(32)
+  
+    SELECT CASE Funct%
+        CASE 0                  ' ---- 0 - Report flag value
+            SEEK #FlagFile%, FlagNumber%
+            GET #FlagFile%, , f$
+            NetFlag$ = f$
+        CASE 1                  ' ---- 1 - Set flag value to NewValue$
+            SEEK #FlagFile%, FlagNumber%
+            PUT #FlagFile%, , NewValue$
+            NetFlag$ = NewValue$
+        CASE 2                  ' ---- 2 - Set value to NewValue$ only if Flag=ReqValue$
+            RV$ = CHR$(32)
+            SEEK #FlagFile%, FlagNumber%
+            GET #FlagFile%, , RV$
+            IF RV$ = ReqValue$ THEN
+                SEEK #FlagFile%, FlagNumber%
+                PUT #FlagFile%, , NewValue$
+                NetFlag$ = NewValue$
+            ELSE
+                NetFlag$ = "04"
+            END IF
+    END SELECT                  ' function
+    CLOSE #FlagFile%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   SetDTA sets up the Disk Transfer Area, where the file info for each file
+'   will be stored.
+'============================================================================
+SUB SetDTA (Buffer AS FileFindBuf) STATIC
+'----------------------------------------------------------------------------
+ 
+   DIM InReg AS Register, OutReg AS Register
+
+   InitBuf Buffer
+
+   InReg.Ax = &H1A00
+   InReg.Ds = VARSEG(Buffer)
+   InReg.Dx = VARPTR(Buffer)
+
+   INTERRUPTX &H21, InReg, OutReg
+'****************************************************************************
+END SUB
+

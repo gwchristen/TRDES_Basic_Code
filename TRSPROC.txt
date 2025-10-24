@@ -1,0 +1,1554 @@
+'   $title:'TRSPROC - Process TRDES records for input into MDS'
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   Jan. 09, 2006
+'       Operator populates DIVISION field on test screen with "07" for OP
+'        tests and "04" for I&M tests. This is read in SUB WriteRecord and
+'        "07OH09009931" for OP or "04IN05610903" for I&M is recorded in the
+'        output record. ("7009" is also accepted for OP)
+'----------------------------------------------------------------------------
+'   July, 1998
+'       Changed for MDS 2 operation
+'============================================================================
+'   Define user record types
+'----------------------------------------------------------------------------
+'   Used for random access file system access to data records.
+   
+	TYPE BuffDef
+		TheData AS STRING * 1000
+	END TYPE
+
+'----------------------------------------------------------------------------
+'   Used for random access file system access to file information record.
+
+	TYPE InfoRec
+		NumRec AS INTEGER
+	END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE FUNCTION Left2$ (Incoming$)
+DECLARE FUNCTION LookUpPriCaseVolts$ (Code$, TestType$)
+DECLARE FUNCTION RightSet$ (Value$, TotalChar%, Dec%)
+DECLARE SUB AppendEOF (FileName$)
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE SUB CT (Ptr%, NumRec%, Buffer$)
+DECLARE SUB DoaRecord (Template$, Buffer$, RatioLoc%, PhaseLoc%, AccClassLoc%)
+DECLARE SUB DrawMenuBox (First%, Last%, a%, b%, Length%)
+DECLARE SUB MtrOutFit (Ptr%, NumRec%, Buffer$)
+DECLARE SUB OneTrail (company$, Count$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadIniFile (LocalFile$, Remote$, BcodeFile$, SerialFile$, Facility$, TestSet$)
+DECLARE SUB Report ()
+DECLARE SUB RT (Ptr%, NumRec%, Buffer$)
+DECLARE SUB VT (Ptr%, NumRec%, Buffer$)
+DECLARE SUB WorkProd (Work$, TimeStamp$)
+DECLARE SUB WriteHeader ()
+DECLARE SUB WriteRecord (Work$, Buffer$)
+DECLARE SUB WriteTrailer ()
+'============================================================================
+'   Constants
+'----------------------------------------------------------------------------
+	CONST Magic% = 800          ' MRDES/MDS Interface maximum record length
+	CONST AEP$ = "American Electric Power"
+	CONST Kingsport$ = "01"     ' Kingsport Power
+	CONST Apco$ = "02"          ' Appalachian Power
+	CONST Kentucky$ = "03"      ' Kentucky Power
+	CONST IMCo$ = "04"          ' Indiana Michigan Power
+	CONST IMMich$ = "05"        ' Indiana Michigan Power (Michigan)
+	CONST WPCo$ = "06"          ' Wheeling Power
+	CONST OPCo$ = "07"          ' Ohio Power
+	CONST CSPCo$ = "10"         ' Columbus Southern Power
+'----------------------------------------------------------------------------
+'   Interface record data locations
+'----------------------------------------------------------------------------
+	CONST AccuracyClass% = 454
+	CONST ActivityCode% = 86
+	CONST BurdenLoc% = 432
+	CONST CompanyCode% = 2
+	CONST DamageDefectCodes% = 150
+	CONST DemagnetizeIndicator% = 458
+	CONST DeviceCode% = 34
+	CONST DeviceSerialNumber% = 39
+	CONST DielectricTestVoltage% = 420
+	CONST MfrCode% = 32
+	CONST OKLocation% = 477
+	CONST PhaseError% = 450
+	CONST PhaseErrorSign% = 449
+	CONST PolarityMarkCheck% = 457
+	CONST PrimaryToSecondaryCaseVolts% = 414
+	CONST RatioAccuracy% = 444
+	CONST Remarks% = 97
+	CONST RepairIndicator% = 149
+	CONST RetirementReasonCode% = 147
+	CONST SecondaryAmps% = 436
+	CONST SecondaryVolts% = 440
+	CONST TestDt% = 88
+	CONST TesterIdentification% = 78
+	CONST TestOccuranceNumber% = 96
+	CONST TestRatio% = 424
+	CONST TestSetLoc% = 248
+	CONST TestSetLen% = 7
+'----------------------------------------------------------------------------
+'   Interface record data locations not really involved in transformer test
+'   record, but necessary for mainframe processing.
+'----------------------------------------------------------------------------
+	CONST KWHStopLoc% = 162
+	CONST KWHStopLen% = 8
+	CONST KWHAccyLoc% = 218
+	CONST KWHAccyLen% = 30
+	CONST TimingLoc% = 255
+	CONST TimingLen% = 23
+	CONST KWStopLoc% = 278
+	CONST KWStopLen% = 1
+	CONST KVARHLoc% = 279
+	CONST KVARHLen% = 20
+	CONST KVARHStopLoc% = 319
+	CONST KVARHStopLen% = 1
+	CONST MiscAccLoc% = 333
+	CONST MiscAccLen% = 20
+	CONST MiscStopLoc% = 373
+	CONST MiscStopLen% = 1
+	CONST Ke1Loc% = 374
+	CONST Ke1Len% = 9
+	CONST Ke2Loc% = 388
+	CONST Ke2Len% = 9
+	CONST ResetLoc% = 402
+	CONST ResetLen% = 5
+'============================================================================
+'   Counters for trailer record, Information record access
+'----------------------------------------------------------------------------
+	DIM SHARED Counter&(7, 2), Info AS InfoRec, DataRec AS BuffDef
+	COMMON SHARED ApCount&, CsCount&, CsFlag%, Facility$, IMCount&, ImFlag%
+	COMMON SHARED KgCount&, KtCount&, MiCount&, OpCount&, OpFlag%, TestSet$
+	COMMON SHARED WpCount&
+'============================================================================
+'   Just checking for version number.
+'----------------------------------------------------------------------------
+	Programmer$ = "K.W.Kroninger"
+	IF COMMAND$ <> "" AND LEFT$(LTRIM$(COMMAND$), 1) = "V" THEN
+		PRINT "TRDES/MDS Interface Utility - Version 11.00"
+		END
+	END IF
+'============================================================================
+'   Define the error trap
+'----------------------------------------------------------------------------
+'    ON ERROR GOTO NetProblem
+'============================================================================
+'   Read information from the menu.ini file.  Only thing we actually use is
+'   Facility$
+
+	ReadIniFile LocalFile$, Remote$, BcodeFile$, Serial$, Facility$, TestSet$
+
+'   Zero the counters
+   
+	KgCount& = 0                ' Kingsport Power
+	ApCount& = 0                ' Appalachian Power
+	KtCount& = 0                ' Kentucky Power
+	IMCount& = 0                ' Indiana Michigan Power
+	MiCount& = 0                ' Indiana Michigan Power (Michigan)
+	WpCount& = 0                ' Wheeling Power
+	OpCount& = 0                ' Ohio Power
+	CsCount& = 0                ' Columbus Southern Power
+
+'   Do the actual conversion
+
+	InFile% = FREEFILE
+	OPEN "TRSDAT.DAT" FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+   
+	GET #InFile%, 1, Info       ' How many records in file?
+	CLOSE #InFile%
+
+'   If there's no records in the file, exit.
+
+	CLS
+	FOR x% = 1 TO Info.NumRec
+		InFile% = FREEFILE
+		OPEN "TRSDAT.DAT" FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+		GET #InFile%, x% + 1, DataRec
+		Buffer$ = DataRec.TheData
+		CLOSE #InFile%
+		Typ$ = LEFT$(Buffer$, 1)            ' What kind of device?
+		SELECT CASE Typ$
+			CASE "1"                        ' Current transformer
+				CT x%, Info.NumRec, Buffer$
+			CASE "3"                        ' Voltage transformer
+				VT x%, Info.NumRec, Buffer$
+			CASE "6"                        ' Reactiformer
+				RT x%, Info.NumRec, Buffer$
+			CASE "7"                        ' Metering Outfit/Dual Range CT
+				MtrOutFit x%, Info.NumRec, Buffer$
+		END SELECT
+	NEXT
+
+	CLOSE all
+   
+	Report
+   
+	LOCATE 22, 1
+   
+Split:
+	END
+'============================================================================
+'   Network Problems
+
+NetProblem:
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR))
+	ELSE
+
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+
+	END IF
+   
+	IF Junk$ = CHR$(27) THEN
+		RESUME Split
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+
+'****************************************************************************
+'   End of TRSPROC main program
+'****************************************************************************
+
+'****************************************************************************
+'   Process TRDES CT record into MDS interface record.
+'============================================================================
+SUB CT (Ptr%, NumRec%, Buffer$)
+'----------------------------------------------------------------------------
+	PRINT USING "Processing record ### of ### - CT "; Ptr%; NumRec%;
+'============================================================================
+'   Current Transformer Record Data
+'----------------------------------------------------------------------------
+
+	Ratio$ = LTRIM$(RTRIM$(MID$(Buffer$, 155, 7)))  ' Ratio
+
+'============================================================================
+'   Set up template string
+'----------------------------------------------------------------------------
+
+'   Establish the template
+
+	Template$ = "1" + SPACE$(Magic%)
+   
+'   Divison/Area/Storeroom
+   
+	MID$(Template$, CompanyCode%, 12) = LTRIM$(RTRIM$(MID$(Buffer$, 901, 12)))
+
+'   Mfr code
+
+	MID$(Template$, MfrCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 28, 2)))
+
+'   Device code
+
+	MID$(Template$, DeviceCode%, 5) = MID$(Buffer$, 2, 5)
+   
+	Dcode$ = MID$(Template$, DeviceCode%, 5)
+
+'   Device Serial Number
+
+	MID$(Template$, DeviceSerialNumber%, 26) = LTRIM$(RTRIM$(MID$(Buffer$, 453, 26)))
+
+'   Tester identification
+
+	MID$(Template$, TesterIdentification%, 8) = MID$(Buffer$, 71, 3)
+
+'   Activity code
+
+	MID$(Template$, ActivityCode%, 2) = MID$(Buffer$, 991, 2)
+   
+	IF MID$(Template$, ActivityCode%, 2) = "  " THEN
+		MID$(Template$, ActivityCode%, 2) = "04"
+	END IF
+
+'   Test Date
+
+	MID$(Template$, TestDt%, 8) = MID$(Buffer$, 125, 8)
+
+'   Remarks regarding test
+
+	MID$(Template$, Remarks%, 50) = LTRIM$(RTRIM$(MID$(Buffer$, 75, 50)))
+
+'   Retirement reason code
+
+	MID$(Template$, RetirementReasonCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 479, 2)))
+
+'------------------
+'   Test Ratio.  Possibly strange code allows dual ratio.
+
+	IF INSTR(Ratio$, ":") > 0 THEN
+		Ratio$ = LEFT$(Ratio$, INSTR(Ratio$, ":") - 1)
+	END IF
+
+	Slash% = INSTR(Ratio$, "/")
+  
+	IF Slash% > 1 THEN
+		LRatio$ = LEFT$(Ratio$, Slash% - 1)
+	ELSE
+		LRatio$ = Ratio$
+	END IF
+  
+	IF Slash% < LEN(Ratio$) AND Slash% > 0 THEN
+		HRatio$ = MID$(Ratio$, Slash% + 1)
+	ELSE
+		HRatio$ = Ratio$
+	END IF
+
+	MID$(Template$, TestRatio%, 8) = RightSet$(LRatio$, 8, 3)
+
+'------------------
+'   Polarity mark check
+
+	MID$(Template$, PolarityMarkCheck%, 1) = "Y"
+
+'   Demagnetize indicator
+
+	MID$(Template$, DemagnetizeIndicator%, 1) = "Y"
+
+'   Test occurance number
+
+	MID$(Template$, TestOccuranceNumber%, 1) = "1"
+
+'   Dielectric test voltage
+
+	MID$(Template$, DielectricTestVoltage%, 4) = "2500"
+  
+'   Primary to secondary/case volts
+
+	MID$(Template$, PrimaryToSecondaryCaseVolts%, 6) = LookUpPriCaseVolts$(RIGHT$(Dcode$, 1), LEFT$(Template$, 1))
+
+'   Repair indicator
+
+	MID$(Template$, RepairIndicator%, 10) = "N"
+
+'   Damage/Defect Codes
+   
+	MID$(Template$, DamageDefectCodes%, 12) = MID$(Buffer$, 601, 12)
+
+'   Secondary volts
+
+	MID$(Template$, SecondaryVolts%, 4) = "0000"
+
+'============================================================================
+'   Ok, template's complete.  Now do the actual record writes.  A record is
+'   generated if the amp field is not blank.
+'============================================================================
+'   Record 1 - This will be the test/history record if it's a new transformer.
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 165, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 210, 3)))
+
+		DoaRecord Work$, Buffer$, 243, 249, 255
+   
+	END IF
+'============================================================================
+'   Record 2
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 170, 5)))
+   
+	IF Amp$ <> "" THEN
+
+		Work$ = Template$
+	   
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 213, 3)))
+
+		DoaRecord Work$, Buffer$, 267, 273, 279
+
+	END IF
+'============================================================================
+'   Record 3
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 175, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 216, 3)))
+
+		DoaRecord Work$, Buffer$, 291, 297, 303
+
+	END IF
+'============================================================================
+'   Record 4
+'----------------------------------------------------------------------------
+
+'   Switch to high ratio at this point
+
+	MID$(Template$, TestRatio%, 8) = RightSet$(HRatio$, 8, 3)
+   
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 195, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	   
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 228, 3)))
+
+		DoaRecord Work$, Buffer$, 387, 393, 399
+
+	END IF
+'============================================================================
+'   Record 5
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 200, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	  
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	  
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 231, 3)))
+
+		DoaRecord Work$, Buffer$, 411, 417, 423
+
+	END IF
+'============================================================================
+'   Record 6
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 205, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	 
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	 
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 234, 3)))
+
+		DoaRecord Work$, Buffer$, 435, 441, 447
+
+	END IF
+   
+	PRINT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prepares a record, then calls the record write routine.
+'============================================================================
+SUB DoaRecord (Template$, Buffer$, RatioLoc%, PhaseLoc%, AccClassLoc%)
+'----------------------------------------------------------------------------
+
+'   Ratio Accuracy
+	  
+	MID$(Template$, RatioAccuracy%, 5) = RightSet$(Left2$(MID$(Buffer$, RatioLoc%, 6)), 5, 4)
+
+'   Phase Error
+
+	Phase$ = LTRIM$(RTRIM$(MID$(Buffer$, PhaseLoc%, 6)))
+	  
+	MID$(Template$, PhaseErrorSign%, 1) = LEFT$(Phase$, 1)
+   
+	MID$(Template$, PhaseError%, 4) = RightSet$(MID$(Phase$, 2), 4, 2)
+
+'   Accuracy Class
+
+	MID$(Template$, AccuracyClass%, 3) = RightSet$(MID$(Buffer$, AccClassLoc%, 6), 3, 2)
+
+'   If the primary to secondary/case volts is blank, default it.
+   
+	IF LTRIM$(RTRIM$(MID$(Template$, PrimaryToSecondaryCaseVolts%, 6))) = "" THEN
+		MID$(Template$, PrimaryToSecondaryCaseVolts%, 6) = "000000"
+	END IF
+
+'   Write the record
+
+	SELECT CASE MID$(Template$, CompanyCode%, 2)
+		CASE "01"           ' Kingsport Power
+			KgCount& = KgCount& + 1
+		CASE "02"           ' Appalachian Power
+			ApCount& = ApCount& + 1
+		CASE "03"           ' Kentucky Power
+			KtCount& = KtCount& + 1
+		CASE "04"           ' Indiana Michigan Power
+			IMCount& = IMCount& + 1
+				CASE "05"           ' Indiana Michigan Power (Michigan)
+			MiCount& = MiCount& + 1
+		CASE "06"           ' Wheeling Power
+			WpCount& = WpCount& + 1
+		CASE "07"           ' Ohio Power
+			OpCount& = OpCount& + 1
+		CASE "10"           ' Columbus Southern Power
+			CsCount& = CsCount& + 1
+	END SELECT
+   
+	RTTemplate$ = RTRIM$(Template$)
+
+	WriteRecord RTTemplate$, Buffer$
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   This function effectively divides the value in Incoming$ by 100.
+'   by locating the decimal point in the incoming string and moving
+'   it two places to its left.  Since in this application the decimal point
+'   will always be in the third or fourth position, there is very little
+'   chance for a problem.
+'============================================================================
+FUNCTION Left2$ (Incoming$)
+'----------------------------------------------------------------------------
+   
+	Work$ = LTRIM$(RTRIM$(Incoming$))
+   
+	Pointer% = INSTR(Work$, ".")
+   
+	IF Pointer% = 0 THEN
+		Left2$ = Incoming$
+	ELSE
+		IF Pointer% = 3 THEN
+			Left2$ = LEFT$("." + LEFT$(Work$, 2) + MID$(Work$, 4) + SPACE$(LEN(Incoming$)), LEN(Incoming$))
+		ELSE
+			Left2$ = LEFT$(LEFT$(Work$, 1) + "." + MID$(Work$, 2, 2) + MID$(Work$, 5) + SPACE$(LEN(Incoming$)), LEN(Incoming$))
+		END IF
+	END IF
+
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Looks up primary/secondary and case Dielectric Test Volts.
+'============================================================================
+FUNCTION LookUpPriCaseVolts$ (Code$, TestType$)
+'----------------------------------------------------------------------------
+	SELECT CASE Code$
+		CASE "0"                ' 600 volt
+			Work$ = "002500"
+		CASE "1"
+			IF TestType$ = "1" THEN
+				Work$ = "014000"
+			ELSE
+				Work$ = "019000"
+			END IF
+		CASE "3"                ' 15 KV
+			IF TestType$ = "1" THEN
+				Work$ = "025000"
+			ELSE
+				Work$ = "034000"
+			END IF
+		CASE "5"                ' 34.5 KV
+			IF TestType$ = "1" THEN
+				Work$ = "052500"
+			ELSE
+				Work$ = "070000"
+			END IF
+		CASE "7"                ' 69 KV
+			IF TestType$ = "1" THEN
+				Work$ = "105000"
+			ELSE
+				Work$ = "140000"
+			END IF
+		CASE "8"
+			IF TestType$ = "1" THEN
+				Work$ = "206000"
+			ELSE
+				Work$ = "275000"
+			END IF
+	END SELECT
+	LookUpPriCaseVolts$ = Work$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Process Metering Outfit/Dual Range CT Record
+'============================================================================
+SUB MtrOutFit (Ptr%, NumRec%, Buffer$)
+'----------------------------------------------------------------------------
+	PRINT USING "Processing record ### of ### - MO "; Ptr%; NumRec%;
+'============================================================================
+'   Metering outfit record data
+'----------------------------------------------------------------------------
+
+'   C. T. Ratios
+   
+	Ratio$ = LTRIM$(RTRIM$(MID$(Buffer$, 58, 11)))
+
+	IF INSTR(Ratio$, ":") > 0 THEN
+		Ratio$ = LEFT$(Ratio$, INSTR(Ratio$, ":") - 1)
+	END IF
+  
+	Slash% = INSTR(Ratio$, "/")
+   
+	IF Slash% > 1 THEN
+		LRatio$ = LEFT$(Ratio$, Slash% - 1)
+	ELSE
+		LRatio$ = Ratio$
+	END IF
+   
+	IF Slash% < LEN(Ratio$) AND Slash% > 0 THEN
+		HRatio$ = MID$(Ratio$, Slash% + 1)
+	ELSE
+		HRatio$ = Ratio$
+	END IF
+
+'============================================================================
+'   Set up template string
+'----------------------------------------------------------------------------
+
+'   Establish the template
+   
+	Template$ = "1" + SPACE$(Magic%)
+
+	MID$(Template$, CompanyCode%, 12) = LTRIM$(RTRIM$(MID$(Buffer$, 901, 12)))
+
+'   Mfr code
+   
+	MID$(Template$, MfrCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 36, 2)))
+
+'   Device code
+   
+	MID$(Template$, DeviceCode%, 5) = MID$(Buffer$, 2, 5)
+	Dcode$ = MID$(Buffer$, 2, 5)
+
+'   Device Serial Number
+   
+	MID$(Template$, DeviceSerialNumber%, 26) = LTRIM$(RTRIM$(MID$(Buffer$, 485, 26)))
+
+'   Tester identification
+   
+	MID$(Template$, TesterIdentification%, 8) = MID$(Buffer$, 101, 3)
+
+'   Activity code
+   
+	MID$(Template$, ActivityCode%, 2) = MID$(Buffer$, 991, 2)
+  
+	IF MID$(Template$, ActivityCode%, 2) = "  " THEN
+		MID$(Template$, ActivityCode%, 2) = "04"
+	END IF
+
+'   Test Date
+   
+	MID$(Template$, TestDt%, 8) = MID$(Buffer$, 105, 8)
+
+'   Remarks regarding test
+   
+	MID$(Template$, Remarks%, 50) = LTRIM$(RTRIM$(MID$(Buffer$, 425, 50)))
+
+'   Retirement reason code
+   
+	MID$(Template$, RetirementReasonCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 511, 2)))
+
+'   Polarity mark check
+   
+	MID$(Template$, PolarityMarkCheck%, 1) = "Y"
+
+'   Demagnetize indicator
+   
+	MID$(Template$, DemagnetizeIndicator%, 1) = "Y"
+
+'   Test occurance number
+
+	MID$(Template$, TestOccuranceNumber%, 1) = "1"
+
+'   Dielectric test voltage
+
+	MID$(Template$, DielectricTestVoltage%, 4) = "2500"
+   
+'   Primary to secondary/case volts
+
+	MID$(Template$, PrimaryToSecondaryCaseVolts%, 6) = LookUpPriCaseVolts$(RIGHT$(Dcode$, 1), LEFT$(Template$, 1))
+
+'   Repair indicator
+
+	MID$(Template$, RepairIndicator%, 10) = "N"
+
+'   Damage/Defect Codes
+   
+	MID$(Template$, DamageDefectCodes%, 12) = MID$(Buffer$, 601, 12)
+
+'   Secondary volts
+
+	MID$(Template$, SecondaryVolts%, 4) = "0000"
+
+'============================================================================
+'   Ok, template's complete.  Now write the records.
+'============================================================================
+'   Record 1
+'----------------------------------------------------------------------------
+
+'   Test Ratio
+
+		MID$(Template$, TestRatio%, 8) = RightSet$(LRatio$, 8, 3)
+
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 113, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	   
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 118, 3)))
+	   
+		DoaRecord Work$, Buffer$, 121, 127, 133
+
+	END IF
+'============================================================================
+'   Record 2
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 139, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	  
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	  
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 144, 3)))
+	  
+		DoaRecord Work$, Buffer$, 147, 153, 159
+
+	END IF
+'============================================================================
+'   Record 3
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 165, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	 
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	 
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 170, 3)))
+	 
+		DoaRecord Work$, Buffer$, 173, 179, 185
+
+	END IF
+'============================================================================
+'   Record 4
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 191, 5)))
+   
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+	
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+	
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 196, 3)))
+	
+		DoaRecord Work$, Buffer$, 199, 205, 211
+
+	END IF
+'============================================================================
+'   Record 5
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 217, 5)))
+  
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+   
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+   
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 222, 3)))
+   
+		DoaRecord Work$, Buffer$, 225, 231, 237
+
+	END IF
+'============================================================================
+'   Record 6
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 243, 5)))
+ 
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+  
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+  
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 248, 3)))
+  
+		DoaRecord Work$, Buffer$, 251, 257, 263
+
+	END IF
+'============================================================================
+'   Record 7
+'----------------------------------------------------------------------------
+'   Switch to high ratio at this point
+
+		MID$(Template$, TestRatio%, 8) = RightSet$(HRatio$, 8, 3)
+
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 269, 5)))
+
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	   
+		PRINT "*";
+ 
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+ 
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 274, 3)))
+ 
+		DoaRecord Work$, Buffer$, 277, 283, 289
+
+	END IF
+'============================================================================
+'   Record 8
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 295, 5)))
+
+	IF Amp$ <> "" THEN
+	   
+		Work$ = Template$
+	 
+		PRINT "*";
+
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 300, 3)))
+
+		DoaRecord Work$, Buffer$, 303, 309, 315
+
+	END IF
+'============================================================================
+'   Record 9
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 321, 5)))
+
+	IF Amp$ <> "" THEN
+	  
+		Work$ = Template$
+	
+		PRINT "*";
+
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 326, 3)))
+
+		DoaRecord Work$, Buffer$, 329, 335, 341
+
+	END IF
+'============================================================================
+'   Record 10
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 347, 5)))
+
+	IF Amp$ <> "" THEN
+	  
+		Work$ = Template$
+	
+		PRINT "*";
+
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 352, 3)))
+
+		DoaRecord Work$, Buffer$, 355, 361, 367
+
+	END IF
+'============================================================================
+'   Record 11
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 373, 5)))
+
+	IF Amp$ <> "" THEN
+	  
+		Work$ = Template$
+	
+		PRINT "*";
+
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 378, 3)))
+
+		DoaRecord Work$, Buffer$, 381, 387, 393
+
+	END IF
+'============================================================================
+'   Record 12
+'----------------------------------------------------------------------------
+	Amp$ = LTRIM$(RTRIM$(MID$(Buffer$, 399, 5)))
+
+	IF Amp$ <> "" THEN
+	  
+		Work$ = Template$
+	
+		PRINT "*";
+
+		MID$(Work$, SecondaryAmps%, 4) = RightSet$(Amp$, 4, 1)
+
+'   Burden
+
+		MID$(Work$, BurdenLoc%, 4) = LTRIM$(RTRIM$(MID$(Buffer$, 404, 3)))
+
+		DoaRecord Work$, Buffer$, 407, 413, 419
+
+	END IF
+   
+	PRINT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Read menu.ini file.  File is a somewhat freeform text file.  The only
+'   line actually required for this procedure to function is the line
+'   beginning with an octothorpe, which is used to signal the end of the
+'   file.
+'============================================================================
+SUB ReadIniFile (LocalFile$, Remote$, BcodeFile$, SerialFile$, Facility$, TestSet$)
+'----------------------------------------------------------------------------
+	CLS
+	IniFile% = FREEFILE
+	OPEN "menu.ini" FOR INPUT AS #IniFile%
+	DO
+		LINE INPUT #IniFile%, Work$
+		Work$ = LTRIM$(RTRIM$(Work$))
+		IF INSTR("#;", LEFT$(Work$, 1)) = 0 AND Work$ <> "" THEN
+			IF UCASE$(LEFT$(Work$, 5)) = "LOCAL" THEN
+				LocalFile$ = LTRIM$(MID$(Work$, INSTR(Work$, "=") + 1))
+				IF INSTR(LocalFile$, " ") THEN
+					LocalFile$ = LEFT$(LocalFile$, INSTR(LocalFile$, " ") - 1)
+				END IF
+			END IF
+			IF UCASE$(LEFT$(Work$, 6)) = "REMOTE" THEN
+				Remote$ = LTRIM$(MID$(Work$, INSTR(Work$, "=") + 1))
+				IF INSTR(Remote$, " ") THEN
+					Remote$ = LEFT$(Remote$, INSTR(LocalFile$, " ") - 1)
+				END IF
+			END IF
+			IF UCASE$(LEFT$(Work$, 7)) = "BARCODE" THEN
+				BcodeFile$ = LTRIM$(MID$(Work$, INSTR(Work$, "=") + 1))
+				IF INSTR(BcodeFile$, " ") THEN
+					Bcode$ = LEFT$(BcodeFile$, INSTR(BcodeFile$, " ") - 1)
+				END IF
+			END IF
+			IF UCASE$(LEFT$(Work$, 6)) = "SERIAL" THEN
+				SerialFile$ = LTRIM$(MID$(Work$, INSTR(Work$, "=") + 1))
+				IF INSTR(SerialFile$, " ") THEN
+					SerialFile$ = LEFT$(SerialFile$, INSTR(Serial$, " ") - 1)
+				END IF
+			END IF
+			IF UCASE$(LEFT$(Work$, 8)) = "FACILITY" THEN
+				Facility$ = LTRIM$(RTRIM$(MID$(Work$, INSTR(Work$, "=") + 1)))
+			END IF
+			IF UCASE$(LEFT$(Work$, 7)) = "TESTSET" THEN
+				TestSet$ = LTRIM$(RTRIM$(MID$(Work$, INSTR(Work$, "=") + 1)))
+			END IF
+		END IF
+	LOOP UNTIL LEFT$(Work$, 1) = "#"
+	CLOSE #IniFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Issue a final onscreen report to the operator.
+'============================================================================
+SUB Report
+'----------------------------------------------------------------------------
+   
+		COLOR 14, 0
+
+'   Draw a box
+
+		DrawMenuBox 2, 18, 0, 0, 62
+
+'   Put company header, program identification and date at top
+
+		COLOR 15, 0
+		Cputs AEP$, 3
+		Cputs Facility$, 4
+		Cputs "TRDES/MDS Interface Utility", 5
+		Cputs "Final report for processing on " + DATE$, 6
+   
+'   Print the number of each type of record, totaling all records
+
+		Cputs RightSet$(STR$(KgCount&), 5, 0) + " Kingsport Power records processed                   ", 8
+		Cputs RightSet$(STR$(ApCount&), 5, 0) + " Appalachian Power records processed                 ", 9
+		Cputs RightSet$(STR$(KtCount&), 5, 0) + " Kentucky Power records processed                    ", 10
+		Cputs RightSet$(STR$(IMCount&), 5, 0) + " Indiana Michigan Power records processed            ", 11
+		Cputs RightSet$(STR$(MiCount&), 5, 0) + " Indiana Michigan Power (Michigan) records processed ", 12
+		Cputs RightSet$(STR$(WpCount&), 5, 0) + " Wheeling Power records processed                    ", 13
+		Cputs RightSet$(STR$(OpCount&), 5, 0) + " Ohio Power records processed                        ", 14
+		Cputs RightSet$(STR$(CsCount&), 5, 0) + " Columbus Southern Power records processed           ", 15
+	   
+		Total& = KgCount& + ApCount& + KtCount& + IMCount& + MiCount& + WpCount& + OpCount& + CsCount&
+	   
+		Cputs RightSet$(STR$(Total&), 5, 0) + " total records processed             ", 17
+   
+		Junk$ = Get1Key$("P" + CHR$(13), "Press Enter to exit, P to print report")
+
+		IF Junk$ = "P" THEN
+			FOR Row% = 1 TO 23
+				Work$ = ""
+				FOR Column% = 1 TO 80
+					Work$ = Work$ + CHR$(SCREEN(Row%, Column%))
+				NEXT
+				Work$ = RTRIM$(Work$)
+				LPRINT Work$
+			NEXT
+		END IF                      ' Print the data
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Right sets a string representation of a value passed in Value$, either
+'   integer or floating point, into a string of TotalChars% length, with
+'   any decimal portion being Dec% characters in length.  Value$ should be
+'   rounded to proper number of decmial places, if applicable, prior to
+'   calling this function.  String returned will be all numbers, with leading
+'   and trailing zeros as necessary to make the string TotalChar% in length.
+'============================================================================
+FUNCTION RightSet$ (Value$, TotalChar%, Dec%)
+'----------------------------------------------------------------------------
+	
+	V$ = LTRIM$(RTRIM$(Value$))
+
+'   Is there a decimal point?
+
+	DecPt% = INSTR(V$, ".")
+   
+	IF DecPt% = 0 THEN
+		V$ = V$ + "."
+		DecPt% = INSTR(V$, ".")
+	END IF
+
+'   If there is, get the decimal part of the number into Dec$
+
+	IF DecPt% > 0 AND DecPt% < LEN(V$) THEN
+		Dec$ = MID$(V$, DecPt% + 1)
+	END IF
+ 
+'   Properly format the decimal portion
+
+	IF Dec% > 0 THEN
+		Dec$ = LEFT$(Dec$ + STRING$(Dec%, "0"), Dec%)
+	END IF
+
+'   If there's an integer portion, get it into Integer$
+
+	IF DecPt% > 1 THEN
+		Integer$ = LEFT$(V$, DecPt% - 1)
+	END IF
+  
+'   Assemble and return the string
+
+	RightSet$ = RIGHT$(STRING$(TotalChar%, "0") + Integer$ + Dec$, TotalChar%)
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Process Reactiformer record
+'============================================================================
+SUB RT (Ptr%, NumRec%, Buffer$)
+'----------------------------------------------------------------------------
+	PRINT USING "Processing record ### of ### - Reactiformer"; Ptr%; NumRec%
+'============================================================================
+'   Set up template string
+'----------------------------------------------------------------------------
+
+'   Establish the template
+   
+	Template$ = "1" + SPACE$(Magic%)
+
+	MID$(Template$, CompanyCode%, 12) = LTRIM$(RTRIM$(MID$(Buffer$, 901, 12)))
+
+'   Mfr code
+   
+	MID$(Template$, MfrCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 28, 2)))
+
+'   Device code
+   
+	MID$(Template$, DeviceCode%, 5) = MID$(Buffer$, 2, 5)
+   
+	Dcode$ = MID$(Template$, DeviceCode%, 5)
+
+'   Device Serial Number
+   
+	MID$(Template$, DeviceSerialNumber%, 26) = LTRIM$(RTRIM$(MID$(Buffer$, 301, 26)))
+
+'   Tester identification
+   
+	MID$(Template$, TesterIdentification%, 8) = LTRIM$(RTRIM$(MID$(Buffer$, 71, 3)))
+
+'   Activity code
+   
+	MID$(Template$, ActivityCode%, 2) = MID$(Buffer$, 991, 2)
+  
+	IF MID$(Template$, ActivityCode%, 2) = "  " THEN
+		MID$(Template$, ActivityCode%, 2) = "04"
+	END IF
+
+'   Test Date
+   
+	MID$(Template$, TestDt%, 8) = MID$(Buffer$, 125, 8)
+
+'   Remarks regarding test
+   
+	MID$(Template$, Remarks%, 50) = LTRIM$(RTRIM$(MID$(Buffer$, 75, 50)))
+
+'   Retirement reason code
+   
+	MID$(Template$, RetirementReasonCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 327, 2)))
+
+'   Test occurance number
+
+	MID$(Template$, TestOccuranceNumber%, 1) = "1"
+
+'   Mark test OK, unless there's problems
+   
+	IF MID$(Template$, RetirementReasonCode%, 2) = SPACE$(2) THEN
+		MID$(Template$, OKLocation%, 2) = "OK"
+	END IF
+   
+'   Dielectric test voltage
+
+	MID$(Template$, DielectricTestVoltage%, 4) = "2500"
+
+	MID$(Template$, PrimaryToSecondaryCaseVolts%, 6) = LookUpPriCaseVolts$(RIGHT$(Dcode$, 1), LEFT$(Template$, 1))
+
+'   Repair indicator
+
+	MID$(Template$, RepairIndicator%, 10) = "N"
+
+'   Damage/Defect Codes
+   
+	MID$(Template$, DamageDefectCodes%, 12) = MID$(Buffer$, 601, 12)
+   
+'   Secondary volts/amps
+
+	MID$(Template$, SecondaryAmps%, 8) = STRING$(8, "0")
+   
+	MID$(Template$, RatioAccuracy%, 15) = "0000000000000YY"
+
+'   Test ratio
+
+	MID$(Template$, TestRatio%, 8) = "00001000"
+
+'   Write the record
+
+	SELECT CASE MID$(Template$, CompanyCode%, 2)
+		CASE "01"           ' Kingsport Power
+			KgCount& = KgCount& + 1
+		CASE "02"           ' Appalachian Power
+			ApCount& = ApCount& + 1
+		CASE "03"           ' Kentucky Power
+			KtCount& = KtCount& + 1
+		CASE "04"           ' Indiana Michigan Power
+			IMCount& = IMCount& + 1
+		CASE "05"           ' Indiana Michigan Power (Michigan)
+			MiCount& = MiCount& + 1
+		CASE "06"           ' Wheeling Power
+			WpCount& = WpCount& + 1
+		CASE "07"           ' Ohio Power
+			OpCount& = OpCount& + 1
+		CASE "10"           ' Columbus Southern Power
+			CsCount& = CsCount& + 1
+	END SELECT
+  
+	RTTemplate$ = RTRIM$(Template$)
+
+	WriteRecord RTTemplate$, Buffer$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Process VT record
+'============================================================================
+SUB VT (Ptr%, NumRec%, Buffer$)
+'----------------------------------------------------------------------------
+	PRINT USING "Processing record ### of ### - VT "; Ptr%; NumRec%;
+'============================================================================
+'   Voltage Transformer Record Information
+'----------------------------------------------------------------------------
+	Ratio$ = LTRIM$(RTRIM$(MID$(Buffer$, 153, 9)))      ' Ratio
+'============================================================================
+'   Set up template string
+'----------------------------------------------------------------------------
+'   Establish it
+   
+	Template$ = "1" + SPACE$(Magic%)
+
+	MID$(Template$, CompanyCode%, 12) = LTRIM$(RTRIM$(MID$(Buffer$, 901, 12)))
+
+'   Mfr code
+   
+	MID$(Template$, MfrCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 28, 2)))
+
+'   Device code
+   
+	MID$(Template$, DeviceCode%, 5) = MID$(Buffer$, 2, 5)
+   
+	Dcode$ = MID$(Buffer$, 2, 5)
+
+'   Device Serial Number
+   
+	MID$(Template$, DeviceSerialNumber%, 26) = LTRIM$(RTRIM$(MID$(Buffer$, 453, 26)))
+
+'   Tester identification
+   
+	MID$(Template$, TesterIdentification%, 8) = LTRIM$(RTRIM$(MID$(Buffer$, 71, 3)))
+
+'   Activity code
+   
+	MID$(Template$, ActivityCode%, 2) = MID$(Buffer$, 991, 2)
+  
+	IF MID$(Template$, ActivityCode%, 2) = "  " THEN
+		MID$(Template$, ActivityCode%, 2) = "04"
+	END IF
+
+'   Test Date
+   
+	MID$(Template$, TestDt%, 8) = MID$(Buffer$, 125, 8)
+
+'   Remarks regarding test
+   
+	MID$(Template$, Remarks%, 50) = LTRIM$(RTRIM$(MID$(Buffer$, 75, 50)))
+
+'   Retirement reason code
+   
+	MID$(Template$, RetirementReasonCode%, 2) = LTRIM$(RTRIM$(MID$(Buffer$, 479, 2)))
+
+'   Polarity mark check
+   
+	MID$(Template$, PolarityMarkCheck%, 1) = "Y"
+
+'   Demagnetize indicator
+   
+	MID$(Template$, DemagnetizeIndicator%, 1) = "Y"
+
+'   Test occurance number
+
+	MID$(Template$, TestOccuranceNumber%, 1) = "1"
+
+'   Test Ratio
+  
+	IF INSTR(Ratio$, ":") > 0 THEN
+		Ratio$ = LEFT$(Ratio$, INSTR(Ratio$, ":") - 1)
+	END IF
+  
+	Slash% = INSTR(Ratio$, "/")
+   
+	IF Slash% > 1 THEN
+		LRatio$ = LEFT$(Ratio$, Slash% - 1)
+	ELSE
+		LRatio$ = Ratio$
+	END IF
+   
+	IF Slash% < LEN(Ratio$) AND Slash% > 0 THEN
+		HRatio$ = MID$(Ratio$, Slash% + 1)
+	ELSE
+		HRatio$ = Ratio$
+	END IF
+
+	MID$(Template$, TestRatio%, 8) = RightSet$(LRatio$, 8, 3)
+
+'   Dielectric test voltage
+
+	MID$(Template$, DielectricTestVoltage%, 4) = "2500"
+   
+'   Primary to secondary/case volts
+
+	MID$(Template$, PrimaryToSecondaryCaseVolts%, 6) = LookUpPriCaseVolts$(RIGHT$(Dcode$, 1), LEFT$(Template$, 1))
+
+'   Repair indicator
+
+	MID$(Template$, RepairIndicator%, 10) = "N"
+
+'   Damage/Defect Codes
+   
+	MID$(Template$, DamageDefectCodes%, 12) = MID$(Buffer$, 601, 12)
+
+'   Secondary amps
+
+	MID$(Template$, SecondaryAmps%, 4) = "0000"
+
+'============================================================================
+'   Ok, template's complete.  Now write the record(s)
+'============================================================================
+'   Record 1
+'----------------------------------------------------------------------------
+	Volt$ = LTRIM$(RTRIM$(MID$(Buffer$, 165, 5)))
+   
+	IF Volt$ <> "" THEN
+	  
+		Work$ = Template$
+	
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryVolts%, 4) = RightSet$(Volt$, 4, 1)
+
+'   Burden
+
+		Burden$ = LTRIM$(RTRIM$(MID$(Buffer$, 210, 3)))
+	   
+		IF Burden$ = "0" THEN   ' Help with mainframe sort
+			Burden$ = "O"
+		END IF
+	   
+		MID$(Work$, BurdenLoc%, 4) = Burden$
+
+		DoaRecord Work$, Buffer$, 243, 249, 255
+
+	END IF
+'============================================================================
+'   Record 2
+'----------------------------------------------------------------------------
+	Volt$ = LTRIM$(RTRIM$(MID$(Buffer$, 170, 5)))
+   
+	IF Volt$ <> "" THEN
+
+		Work$ = Template$
+	
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryVolts%, 4) = RightSet$(Volt$, 4, 1)
+
+'   Burden
+	   
+		Burden$ = LTRIM$(RTRIM$(MID$(Buffer$, 213, 3)))
+	   
+		IF Burden$ = "0" THEN
+			Burden$ = "O"           ' Oh, instead of zero
+		END IF
+
+		MID$(Work$, BurdenLoc%, 4) = Burden$
+
+		DoaRecord Work$, Buffer$, 267, 273, 279
+
+	END IF
+'============================================================================
+'   Record 3
+'----------------------------------------------------------------------------
+	Volt$ = LTRIM$(RTRIM$(MID$(Buffer$, 175, 5)))
+   
+	IF Volt$ <> "" THEN
+	  
+		Work$ = Template$
+
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryVolts%, 4) = RightSet$(Volt$, 4, 1)
+
+'   Burden
+	   
+		Burden$ = LTRIM$(RTRIM$(MID$(Buffer$, 216, 3)))
+	   
+		IF Burden$ = "0" THEN
+			Burden$ = "O"
+		END IF
+	   
+		MID$(Work$, BurdenLoc%, 4) = Burden$
+
+		DoaRecord Work$, Buffer$, 291, 297, 303
+
+	END IF
+'============================================================================
+'   Record 4
+'----------------------------------------------------------------------------
+'   Switch to high ratio here
+
+	Volt$ = LTRIM$(RTRIM$(MID$(Buffer$, 195, 5)))
+   
+	IF Volt$ <> "" THEN
+	  
+		Work$ = Template$
+	
+		PRINT "*";
+	   
+		MID$(Work$, TestRatio%, 8) = RightSet$(HRatio$, 8, 3)
+
+		MID$(Work$, SecondaryVolts%, 4) = RightSet$(Volt$, 4, 1)
+
+'   Burden
+	   
+		Burden$ = LTRIM$(RTRIM$(MID$(Buffer$, 228, 3)))
+	   
+		IF Burden$ = "0" THEN
+			Burden$ = "O"
+		END IF
+	   
+		MID$(Work$, BurdenLoc%, 4) = Burden$
+
+		DoaRecord Work$, Buffer$, 387, 393, 399
+
+	END IF
+'============================================================================
+'   Record 5
+'----------------------------------------------------------------------------
+	Volt$ = LTRIM$(RTRIM$(MID$(Buffer$, 200, 5)))
+   
+	IF Volt$ <> "" THEN
+
+		Work$ = Template$
+	
+		PRINT "*";
+
+		MID$(Work$, SecondaryVolts%, 4) = RightSet$(Volt$, 4, 1)
+
+'   Burden
+	   
+		Burden$ = LTRIM$(RTRIM$(MID$(Buffer$, 231, 3)))
+	   
+		IF Burden$ = "0" THEN
+			Burden$ = "O"
+		END IF
+	   
+		MID$(Work$, BurdenLoc%, 4) = Burden$
+
+		DoaRecord Work$, Buffer$, 411, 417, 423
+
+	END IF
+'============================================================================
+'   Record 6
+'----------------------------------------------------------------------------
+	Volt$ = LTRIM$(RTRIM$(MID$(Buffer$, 205, 5)))
+   
+	IF Volt$ <> "" THEN
+	  
+		Work$ = Template$
+
+		PRINT "*";
+	   
+		MID$(Work$, SecondaryVolts%, 4) = RightSet$(Volt$, 4, 1)
+
+'   Burden
+	   
+		Burden$ = LTRIM$(RTRIM$(MID$(Buffer$, 234, 3)))
+	   
+		IF Burden$ = "0" THEN
+			Burden$ = "O"
+		END IF
+	   
+		MID$(Work$, BurdenLoc%, 4) = Burden$
+
+		DoaRecord Work$, Buffer$, 435, 441, 447
+
+	END IF
+   
+	PRINT
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Opens the output file for append, writes the record.
+'============================================================================
+SUB WriteRecord (Work$, Buffer$)
+'----------------------------------------------------------------------------
+
+'   Numeric postions in interface record require numbers, not spaces.
+'   Don't process header/trailer record
+
+	IF INSTR("12", LEFT$(Work$, 1)) THEN
+		MID$(Work$, KWHStopLoc%, KWHStopLen%) = "N" + STRING$(KWHStopLen% + 1, "0")
+		MID$(Work$, KWHAccyLoc%, KWHAccyLen%) = STRING$(KWHAccyLen%, "0")
+		MID$(Work$, TimingLoc%, TimingLen%) = STRING$(TimingLen%, "0")
+		MID$(Work$, KVARHLoc%, KVARHLen%) = STRING$(KVARHLen%, "0")
+		MID$(Work$, KVARHStopLoc%, KVARHStopLen%) = "N" + STRING$(KVARHStopLen% - 1, "0")
+		MID$(Work$, MiscAccLoc%, MiscAccLen%) = STRING$(MiscAccLen%, "0")
+		MID$(Work$, MiscStopLoc%, MiscStopLen%) = "N" + STRING$(MiscStopLen% - 1, "0")
+		MID$(Work$, Ke1Loc%, Ke1Len%) = STRING$(Ke1Len%, "0")
+		MID$(Work$, Ke2Loc%, Ke2Len%) = STRING$(Ke2Len%, "0")
+		MID$(Work$, ResetLoc%, ResetLen%) = STRING$(ResetLen%, "0")
+		MID$(Work$, TestSetLoc%, TestSetLen%) = TestSet$
+		MID$(Work$, KWStopLoc%, KWStopLen%) = "N"
+	END IF
+
+'   MID$(Work$, 2, 12) = "07OH09009931"    we used to have everything from OP
+
+	SELECT CASE RTRIM$(LTRIM$(MID$(Buffer$, 67, 4)))
+		CASE "7009"
+			ITSFROM$ = "07OH09009931"
+		CASE "0007"
+			ITSFROM$ = "07OH09009931"
+		CASE "0004"
+			ITSFROM$ = "04IN05610903"
+		CASE ELSE
+			ITSFROM$ = "07OH09009931"
+	END SELECT
+
+	MID$(Work$, 2, 12) = ITSFROM$
+
+									
+'   Now write the record
+
+	Df% = FREEFILE
+	OPEN "TRS2MDS" FOR APPEND AS #Df%
+	PRINT #Df%, RTRIM$(Work$)
+	CLOSE #Df%
+'****************************************************************************
+END SUB
+

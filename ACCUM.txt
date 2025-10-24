@@ -1,0 +1,296 @@
+'   $title:'ACCUM - Accumulate Data from Test Boards while LAN is down'
+'   Version 0.10
+'   K.W.Kroninger
+'   American Electric Power
+'   Canton Meter Laboratory
+'============================================================================
+'   History:
+'----------------------------------------------------------------------------
+'   June, 1998
+'       Original Issue
+'============================================================================
+'   Make arrays dynamic so they can be redimensioned
+'   $DYNAMIC
+'============================================================================
+'   Record type definitions
+'----------------------------------------------------------------------------
+'   The information record type is used in the first record of the data file
+'   to track number of records, processed/unprocessed file and initialization,
+'   edit and process dates.
+	TYPE InfoRecord
+		NumberOfRecords AS INTEGER
+		ProcessFlag AS STRING * 1
+		InitDate AS STRING * 10
+		EditDate AS STRING * 10
+		ProcDate AS STRING * 10
+		Signature AS STRING * 20
+	END TYPE
+'----------------------------------------------------------------------------
+'   Define buffer record type.  This one's just a 500 character block.
+'   How to use it is defined outside the record type.
+	TYPE DataBuffer
+		Work AS STRING * 500
+	END TYPE
+'============================================================================
+'   Declare Procedures
+'----------------------------------------------------------------------------
+DECLARE SUB Cputs (Message$, Row%)
+DECLARE FUNCTION Get1Key$ (Accept$, Prompt$)
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB ReadIniFile (LocalFile$, RemoteFile$, IniFile$)
+'============================================================================
+'   Dimension arrays
+'----------------------------------------------------------------------------
+	DIM SHARED Info AS InfoRecord, DataRec AS DataBuffer
+'============================================================================
+	Programmer$ = "K.W.Kroninger"
+'============================================================================
+'   Version number
+'----------------------------------------------------------------------------
+	Version$ = "Version 0.10"
+'============================================================================
+'   Just checking for version number
+'----------------------------------------------------------------------------
+	IF UCASE$(LTRIM$(RTRIM$(COMMAND$))) = "V" THEN
+		PRINT "MRDES II - Meter Record Data Entry/Edit System - "; Version$
+		END
+	END IF
+
+	IF LTRIM$(RTRIM$(COMMAND$)) <> "" THEN
+		IniFile$ = COMMAND$
+		IF INSTR(IniFile$, " ") THEN
+			IniFile$ = LEFT$(IniFile$, INSTR(IniFile$, " ") - 1)
+		END IF
+	ELSE
+		IniFile$ = "accum.ini"
+	END IF
+'============================================================================
+'   Check for initialization file and read if found.  This file defines the
+'   files whose data is to be accumulated into MRDES.DAT and where the
+'   various files are.
+'----------------------------------------------------------------------------
+'   Set an error trap to handle situation if config file is missing
+
+	ON ERROR GOTO BadIni
+
+'   Read the file, set the paths.
+
+	ReadIniFile LocalFile$, RemoteFile$, IniFile$
+
+'   Clear this error trap so it doesn't try to help later on.
+
+	ON ERROR GOTO 0
+
+'============================================================================
+'   Check the remote file to see that it exists, and how many records it has.
+
+	InFile% = FREEFILE
+	OPEN RemoteFile$ FOR RANDOM AS #InFile% LEN = LEN(DataRec)
+	GET #InFile%, 1, Info
+	IF Info.NumberOfRecords = 0 THEN
+		CLOSE
+		KILL RemoteFile$
+		Cputs "No records in file", 10
+		x$ = Get1Key$(CHR$(13), "Press Enter to exit")
+		END
+	END IF
+
+'   Processed file... Do we continue?
+
+	IF Info.ProcessFlag = "P" THEN
+		CLS
+		Cputs "File has been processed", 10
+		Cputs "Press C to continue, E to exit", 15
+		x$ = Get1Key$("CcEe", "")
+		IF INSTR("Ee", x$) THEN
+			CLOSE
+			END
+		END IF
+   
+	END IF
+
+	Remote% = Info.NumberOfRecords
+
+'   Now check the local file. If this one doesn't exist, create it. 
+   
+	OutFile% = FREEFILE
+	OPEN LocalFile$ FOR RANDOM AS #OutFile% LEN = LEN(DataRec)
+	GET #OutFile%, 1, Info
+	IF Info.NumberOfRecords = 0 THEN
+		Info.ProcessFlag = "U"
+		Dt$ = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + RIGHT$(DATE$, 4)
+		Info.InitDate = Dt$
+		Info.EditDate = Dt$
+		Info.ProcDate = Dt$
+		Info.Signature = "Accum utility"
+	END IF
+
+'   All the setup's done.  Do the deed.
+
+	FOR Counter% = 2 TO Remote% + 1
+		GET #InFile%, Counter%, DataRec
+		Info.NumberOfRecords = Info.NumberOfRecords + 1
+		PUT #OutFile%, Info.NumberOfRecords + 1, DataRec
+	NEXT
+
+   
+'   Update information in local file
+
+
+	PUT #OutFile%, 1, Info
+
+	CLOSE #OutFile%
+
+'   Set process flag in output file
+
+	GET #InFile%, 1, Info
+	
+	Info.ProcessFlag = "P"
+
+	CLOSE
+
+'============================================================================
+'   This line's here to protect the error traps
+'---------------------------------------------------------------------------- 
+END
+'============================================================================
+'   Beginning of error traps
+'----------------------------------------------------------------------------
+'   Arrive here if the config file is bad or missing.  This particular error
+'   trap will run the configuration utility.
+
+BadIni:
+	CLOSE
+	CLS
+	Cputs "Initialization file not found or defective.", 10
+	Junk$ = Get1Key$(CHR$(13), "Press ENTER to exit.")
+  
+	SYSTEM
+'----------------------------------------------------------------------------
+'   Network Problems.  Basically, what this system does in repsonse to a
+'   network, or any error, for that matter, error is wait 10 seconds, then
+'   retry the failing request.  If the DEBUG environment variable is set to
+'   "YES", the system error number is presented on the status line.
+
+NetProblem:
+   
+	IF UCASE$(ENVIRON$("DEBUG")) = "YES" THEN
+	   
+		Junk$ = Get1Key$(CHR$(13) + CHR$(27), STR$(ERR) + " Enter to continue, Esc to exit")
+   
+	ELSE
+	   
+'   $INCLUDE: 'c:\mrswork\neterror.inc'
+   
+	END IF
+	IF Junk$ = CHR$(27) THEN
+		CLOSE
+		SYSTEM
+	ELSE
+		RESUME
+	END IF
+
+'   End of error traps
+'****************************************************************************
+'   End of MRDES.BAS main module
+'****************************************************************************
+
+REM $STATIC
+'****************************************************************************
+'   Centers Message$ on screen line Row%.  Leaves cursor on screen line Row%.
+'============================================================================
+SUB Cputs (Message$, Row%)
+'----------------------------------------------------------------------------
+	PutXY Row%, (80 - LEN(Message$)) \ 2, Message$
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints prompt, if any, on 25th line, gets a keystroke acceptable
+'   according to the information passed in Accept$.  Leaves 25th line clear,
+'   alphabetic input is converted to upper case.
+'============================================================================
+FUNCTION Get1Key$ (Accept$, Prompt$)
+'----------------------------------------------------------------------------
+
+	CsrRow% = CSRLIN
+	CsrCol% = POS(0)
+
+'   Turn the cursor off
+
+	LOCATE , , 0
+	IF Prompt$ <> "" THEN
+		LOCATE 25, 1
+		PRINT SPACE$(79);
+		Cputs Prompt$, 25
+	END IF
+
+	DO
+		x$ = UCASE$(INPUT$(1))
+	LOOP WHILE INSTR(Accept$, x$) = 0
+
+	LOCATE 25, 1
+	PRINT SPACE$(79);
+
+'   Turn the cursor back on
+
+	LOCATE CsrRow%, CsrCol%, 1
+	Get1Key$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Prints string passed in Message$ at screen location Row%, Column%.  Checks
+'   Row% and Column% for valid screen coordinates, and Column% plus Message$
+'   length the see that the string will fit on line Row%.  Exits without
+'   printing string if location invalid.  Leaves cursor on screen line Row%
+'============================================================================
+SUB PutXY (Row%, Column%, Message$)
+'----------------------------------------------------------------------------
+	IF Row% < 1 OR Row% > 25 OR Column% < 1 OR Column% > 79 THEN
+		EXIT SUB
+	END IF
+	IF Column% + LEN(Message$) > 80 THEN
+		EXIT SUB
+	END IF
+	LOCATE Row%, Column%
+	PRINT Message$;
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Read menu.ini file.  File is a somewhat freeform text file.  The only
+'   line actually required for this procedure to function is the line
+'   beginning with an octothorpe, which is used to signal the end of the
+'   file.  For proper program operation, the lines beginning with local
+'   and remote must exist and point to the proper path/filenames for
+'   operation.
+'============================================================================
+SUB ReadIniFile (LocalFile$, RemoteFile$, IniFile$)
+'----------------------------------------------------------------------------
+	CLS
+	IniFile% = FREEFILE
+	OPEN IniFile$ FOR INPUT AS #IniFile%
+	DO
+		LINE INPUT #IniFile%, Work$
+		PRINT Work$
+		Work$ = LTRIM$(RTRIM$(Work$))
+		IF INSTR("#; *!'", LEFT$(Work$, 1)) = 0 AND Work$ <> "" THEN
+			IF UCASE$(LEFT$(Work$, 5)) = "LOCAL" THEN
+				LocalFile$ = LTRIM$(MID$(Work$, INSTR(Work$, "=") + 1))
+				IF INSTR(LocalFile$, " ") THEN
+					LocalFile$ = LEFT$(LocalFile$, INSTR(LocalFile$, " ") - 1)
+				END IF
+			END IF
+			IF UCASE$(LEFT$(Work$, 6)) = "REMOTE" THEN
+				RemoteFile$ = LTRIM$(MID$(Work$, INSTR(Work$, "=") + 1))
+				IF INSTR(RemoteFile$, " ") THEN
+					RemoteFile$ = LEFT$(RemoteFile$, INSTR(RemoteFile$, " ") - 1)
+				END IF
+			END IF
+		END IF
+	LOOP UNTIL LEFT$(Work$, 1) = "#"
+	CLOSE #IniFile%
+'****************************************************************************
+END SUB
+

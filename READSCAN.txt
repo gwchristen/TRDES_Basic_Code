@@ -1,0 +1,79 @@
+'   $title:'Read scanner'
+'   Version 0.20
+'   K.W.Kroninger
+'   Ohio Power Company
+'   General Service Lab
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   April, 1991
+'       Started
+'       First release
+'============================================================================
+'   The general idea here is to keep looking at the communications line from
+'   the barcode scanner.  When the scanner outputs a character or characters,
+'   read the character from the communication buffer, and write it to a file.
+'   Keep the output file closed as much as possible, only opening it to do the
+'   actual write.  Keep processing in this manner until the operator presses
+'   the Esc key.
+'============================================================================
+'   Parse the command line
+'----------------------------------------------------------------------------
+'   Version Number
+    IF UCASE$(LTRIM$(RTRIM$(COMMAND$))) = "V" THEN
+        PRINT "READSCAN version 0.20"
+        END
+    END IF
+'============================================================================
+'   Now generate the output filename
+'----------------------------------------------------------------------------
+    filename$ = LEFT$(DATE$, 2) + MID$(DATE$, 4, 2) + LEFT$(TIME$, 2) + MID$(TIME$, 4, 2) + ".dat"
+    CLS
+    LOCATE 10, 1
+    PRINT "Output filename:"; filename$
+'============================================================================
+'   The loop that does the deed
+'----------------------------------------------------------------------------
+'   Print exit message.  Message will scroll offscreen eventually
+
+    LOCATE 12, 1
+    PRINT "Press Esc to exit"
+  
+'   Get a file buffer number for the communications line.  Buffer number will
+'   always be one in this application, but get used to doing it the right way.
+
+    Cb% = FREEFILE
+    OPEN "COM1:9600,E,7,1,CS,DS" FOR RANDOM AS #Cb%
+   
+'   Basic scam in the loop is to strobe the keyboard, and grab a key if one's
+'   pressed, then check the communications buffer.  If the buffer has
+'   information, request a file buffer, open the file for binary access,
+'   position the pointer one byte past the end to extend the file, and write
+'   whatever was read from the communication buffer.  Then print the data
+'   from the communication buffer, removing line feeds to keep the QB screen
+'   driver from screwing things up.  Then check any character from the
+'   keyboard to see if it's the Esc key.  If it is, close the communications
+'   buffer and exit.
+
+    DO
+        Ex$ = INKEY$
+        IF LOC(Cb%) > 0 THEN
+            Work$ = INPUT$(LOC(Cb%), #Cb%)
+            Df% = FREEFILE
+            OPEN filename$ FOR BINARY AS Df%
+            SEEK #Df%, LOF(Df%) + 1
+            PUT #Df%, , Work$
+            FOR Counter% = 1 TO LEN(Work$)
+                Ch$ = MID$(Work$, Counter%, 1)
+                IF Ch$ <> CHR$(10) THEN
+                    PRINT Ch$;
+                END IF
+            NEXT
+            CLOSE #Df%
+        END IF
+    LOOP UNTIL Ex$ = CHR$(27)
+    CLOSE
+'============================================================================
+'   End of READSCAN.BAS
+'****************************************************************************
+

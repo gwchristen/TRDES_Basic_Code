@@ -1,0 +1,59 @@
+'   $title:'MRDES II/TRDES BIOS/DOS Access Routines'
+'   Version 0.10
+'   K.W.Kroninger
+'   Ohio Power Company
+'   General Service Lab
+'============================================================================
+'   Program development history (preceeding 12 months)
+'----------------------------------------------------------------------------
+'   October, 1992
+'       Started.
+'============================================================================
+' Define record type needed for INTERRUPT
+TYPE RegType
+	 Ax    AS INTEGER
+	 Bx    AS INTEGER
+	 Cx    AS INTEGER
+	 Dx    AS INTEGER
+	 Bp    AS INTEGER
+	 Si    AS INTEGER
+	 Di    AS INTEGER
+	 Flags AS INTEGER
+END TYPE
+'============================================================================
+'   Declare functions and subprograms
+'----------------------------------------------------------------------------
+' Generate a software interrupt, loading all but the segment registers
+DECLARE SUB Interrupt (intnum AS INTEGER, inreg AS RegType, outreg AS RegType)
+'----------------------------------------------------------------------------
+'   Select Office/Test board work station and drive for installation
+DECLARE SUB GetDiskSpace (SpaceAvail&, Drive$)
+'============================================================================
+'****************************************************************************
+'   End of BIOSDOS main program module
+'****************************************************************************
+
+'****************************************************************************
+'   Select Office/Test board work station and drive for installation
+'============================================================================
+SUB GetDiskSpace (SpaceAvail&, Drive$)
+'----------------------------------------------------------------------------
+	DIM InRegs AS RegType
+
+	InRegs.Ax = &H3600                  ' DOS call for disk free space
+	InRegs.Dx = ASC(UCASE$(Drive$)) - 64
+	Interrupt &H21, InRegs, InRegs
+
+	IF InRegs.Ax = &HFFFF THEN
+		CLS
+		COLOR 12, 0
+		SpaceAvail& = 0
+		Drive$ = "BAD"
+	ELSE
+		SpaceAvail& = InRegs.Ax
+		SpaceAvail& = SpaceAvail& * InRegs.Bx * InRegs.Cx
+		Drive$ = ""
+	END IF
+'****************************************************************************
+END SUB
+

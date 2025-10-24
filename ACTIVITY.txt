@@ -1,0 +1,226 @@
+'   $title:'Activity Code Corrector Utility'
+'   Version 0.10
+'   K.W.Kroninger
+'   Ohio Power Company
+'   PMEL
+'============================================================================
+'   History
+'----------------------------------------------------------------------------
+'   November, 1994
+'       First issue
+'============================================================================
+'   Define record type
+'----------------------------------------------------------------------------
+    TYPE RecordType
+        Id AS STRING * 16
+        Ac AS STRING * 2
+    END TYPE
+'============================================================================
+'   Declare procedures
+'----------------------------------------------------------------------------
+DECLARE SUB AppendEOF (FileName$)
+DECLARE SUB Checkit (Work$)
+DECLARE FUNCTION DateBack% (OldName$)
+'============================================================================
+
+'   Executable code starts here
+
+'   Input file is output from COMBINE
+
+    InFile% = FREEFILE
+    OPEN "opco2aep" FOR INPUT AS #InFile%
+
+'   Temporary output file
+
+    OutFile% = FREEFILE
+    OPEN "Temp" FOR OUTPUT AS #OutFile%
+
+'   OK, files are open, and we're ready... Do the deed.
+
+    WHILE NOT EOF(InFile%)
+        LINE INPUT #InFile%, Work$
+        IF LEFT$(Work$, 1) = "1" THEN
+            IF MID$(Work$, 119, 2) = "04" THEN
+                Checkit Work$
+            END IF
+        END IF
+        PRINT #OutFile%, Work$
+    WEND
+
+'   Updates done, close files.
+
+    CLOSE
+
+'   Back up incoming file, just in case.....
+
+    x% = DateBack%("Opco2Aep")
+
+'   Add the EOF character to the new file
+
+    AppendEOF "temp"
+
+'   File's transparently put back in place
+
+    NAME "temp" AS "Opco2Aep"
+
+'   Now clean up PERDATA file
+
+'   Open files.
+
+    InFile% = FREEFILE
+
+    OPEN "PerData" FOR INPUT AS #InFile%
+
+'   This will be PerData when we get done
+
+    OutFile% = FREEFILE
+
+    OPEN "Temp" FOR OUTPUT AS #OutFile%
+
+'   These are the ones we've finished with.
+
+    DoneFile% = FREEFILE
+
+    OPEN "Complete" FOR APPEND AS #DoneFile%
+
+    WHILE NOT EOF(InFile%)
+        LINE INPUT #InFile%, Work$
+        IF MID$(Work$, 17, 1) = "X" THEN
+            PRINT #DoneFile%, Work$
+        ELSE
+            PRINT #OutFile%, Work$
+        END IF
+    WEND
+
+'   Processing complete.  Close files
+
+    CLOSE
+
+'   This will probably be replaced with a kill command eventually.
+
+    x% = DateBack%("PerData")
+
+'   Rename the output file as Perdata, and the job's done.
+
+    NAME "Temp" AS "PerData"
+
+'****************************************************************************
+'   End of Activity.Bas main module
+'****************************************************************************
+
+'****************************************************************************
+'   Appends explicit EOF character to data file specified in FileName$.
+'============================================================================
+SUB AppendEOF (FileName$)
+'----------------------------------------------------------------------------
+    Buffer% = FREEFILE
+    OPEN FileName$ FOR BINARY AS #Buffer%
+    SEEK #Buffer%, LOF(Buffer%) + 1
+    Eof$ = CHR$(26)
+    PUT #Buffer%, , Eof$
+    CLOSE #Buffer%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks record to see if it's on the list, corrects activity code if so.
+'   Returns ready to write string.
+'============================================================================
+SUB Checkit (Work$)
+'----------------------------------------------------------------------------
+
+'   Set up record type
+
+    DIM Rec AS RecordType
+
+'   Devices to be processed file
+
+    ListFile% = FREEFILE
+
+    OPEN "PerData" FOR RANDOM AS #ListFile% LEN = LEN(Rec) + 2
+
+'   Get the id we're looking for.
+
+    Test$ = MID$(Work$, 32, 16)
+
+    Low% = 1
+
+    High% = LOF(ListFile%) \ 13
+
+    CurrentNumber% = (High% + Low%) \ 2
+
+    DO
+        GET #ListFile%, CurrentNumber%, Rec
+        IF Test$ = Rec.Id THEN      ' Found it.
+            EXIT DO
+        END IF
+        IF Test$ > Rec.Id THEN      ' Look further in the file
+            Low% = CurrentNumber% + 1
+            CurrentNumber% = (High% + Low%) \ 2
+        ELSE
+            High% = CurrentNumber% - 1
+            CurrentNumber% = (High% + Low%) \ 2
+        END IF
+    LOOP UNTIL Low% > High%
+
+    IF Test$ = Rec.Id AND MID$(Work$, 119, 2) = "04" THEN
+        PRINT Rec.Id; " "; MID$(Work$, 119, 2); " "; Rec.Ac
+        MID$(Work$, 119, 2) = Rec.Ac
+        Rec.Ac = "X" + RIGHT$(Rec.Ac, 1)
+        PUT #ListFile%, CurrentNumber%, Rec
+    END IF
+
+    CLOSE #ListFile%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Renames file identifed by OldName$ to a name based on the system date.
+'   Allows up to 26 backups per day.  First backup file has an "A" appended
+'   to the date, the last possible a "Z".  Returns 0 on success, 1 on failure.
+'============================================================================
+FUNCTION DateBack% (OldName$)
+'----------------------------------------------------------------------------
+    NewName$ = RIGHT$(DATE$, 2) + LEFT$(DATE$, 2) + MID$(DATE$, 4, 2)
+    Alpha$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    Pointer% = 0
+    IF INSTR(OldName$, "\") > 0 THEN
+        OldPath$ = OldName$
+        WHILE LEN(OldPath$) > 1 AND RIGHT$(OldPath$, 1) <> "\"
+            OldPath$ = LEFT$(OldPath$, LEN(OldPath$) - 1)
+        WEND
+    ELSE
+        OldPath$ = ""
+    END IF
+
+    DO
+        Pointer% = Pointer% + 1
+        IF Pointer% > 26 THEN
+            EXIT DO
+        END IF
+        WorkName$ = NewName$ + MID$(Alpha$, Pointer%, 1)
+        FileBuffer% = FREEFILE
+        OPEN OldPath$ + WorkName$ FOR BINARY AS #FileBuffer%
+        Test& = LOF(FileBuffer%)
+        CLOSE #FileBuffer%
+    LOOP UNTIL Test& = 0
+
+    KILL OldPath$ + WorkName$
+
+    IF Pointer% > 26 THEN
+        DateBack% = 1
+        EXIT FUNCTION
+    END IF
+    OldName$ = LTRIM$(RTRIM$(OldName$))
+    IF OldName$ = "" THEN
+        CLS
+        PRINT "USEAGE: DATEBACK <filename>"
+        END
+    END IF
+    Cmd$ = "rename " + OldName$ + " " + WorkName$
+    SHELL Cmd$
+    OldName$ = WorkName$
+    DateBack% = 0
+'****************************************************************************
+END FUNCTION
+

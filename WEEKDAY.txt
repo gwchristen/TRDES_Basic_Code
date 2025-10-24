@@ -1,0 +1,63 @@
+
+100 ' DATE.BAS  Compute Day of Week using Zeller's Congruence
+110 '
+120 ' Judson D. McClendon
+130 ' 844 Sun Valley Road
+140 ' Birmingham, AL 35215
+150 '
+160 '
+170 '                      Zeller's Congruence:
+180 '
+190 '   Zeller's Congruence is used to determine the day of the week of
+200 '   any Gregorian Date.  Good for any date since 1582, the BASIC, is
+210 '
+220 '        W = ( D + M*2 + INT((M+1)*.6) + 1 + Y
+230 '                + INT(Y/4) - INT(Y/100) + INT(Y/400) ) MOD 7
+240 '
+250 '   Where:  W = Weekday (0=Sun,1=Mon,2=Tue,3=Wed,4=Thu,5=Fri,6=Sat)
+260 '           D = Day of the month
+270 '           M = adjusted Month  (Jan & Feb = 13 & 14 of prev year)
+280 '           Y = adjusted Year (year - 1 if month is Jan or Feb)
+290 '
+300 '   Example:  Jul 4, 1776     D=4, M=7, Y=1776 (W=4 Thu)
+310 '             Dec 7, 1941     D=7, M=12,Y=1941 (W=0 Sun)
+320 '
+330 '
+340 PRINT : PRINT
+350 PRINT "Compute Day of Week using Zeller's Congruence"
+360 '
+370 '
+380 ' Zeller's Congruence Function to compute day of week
+390 '     Note: The \ are integer divide operators.  A\B = INT(A/B)
+400 '
+410 DEF FNZEL(M,D,Y)=(D+M+M+INT((M+1)*.6)+Y+Y\4-Y\100+Y\400+1) MOD 7
+420 '
+430 ' Function for Day name (D=0-6)
+440 '
+450 DEF FNDAY$(D)=MID$("SunMonTueWedThuFriSat",D*3+1,3)
+460 '
+470 ' Function for Month name (M=1-12)
+480 '
+490 DEF FNMON$(M)=MID$("JanFebMarAprMayJunJulAugSepOctNovDec",(M-1)*3+1,3)
+500 '
+510 ' Get Date
+520 '
+530 PRINT : INPUT "Enter Month,Day,Year: ",MONTH,DAY,YEAR
+540 IF YEAR<100 THEN YEAR=YEAR+1900  ' Assume 20th century if not specified
+550 IF YEAR<1582 THEN 580 ELSE IF YEAR>1582 THEN 590
+560 IF MONTH<10 THEN 580 ELSE IF MONTH>10 THEN 590
+570 IF DAY>14 THEN 590
+580 PRINT "Not valid before Oct 15, 1582" :GOTO 500
+590 IF MONTH<1 OR MONTH>12 THEN PRINT "Month Invalid" :GOTO 500
+600 IF DAY<1 OR DAY>31 THEN PRINT "Day Invalid" :GOTO 500
+610 '
+620 ' Compute DAY.OF.WEEK
+630 '
+640 IF MONTH > 2 THEN 670
+650  DAY.OF.WEEK=FNZEL(MONTH+12,DAY,YEAR-1)  ' Jan & Feb
+660 GOTO 680
+670  DAY.OF.WEEK=FNZEL(MONTH,DAY,YEAR)       ' Mar-Dec
+680 DAY$=STR$(DAY)
+690 PRINT FNDAY$(DAY.OF.WEEK);", ";FNMON$(MONTH);DAY$;",";YEAR
+700 END
+

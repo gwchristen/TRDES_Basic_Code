@@ -1,0 +1,1175 @@
+'   $title:'DAPShip - Enter Meters Sent to GSL with Handheld'
+'   R W Oehler
+'   Ohio Power Company
+'
+'   Version 2.4
+'   December 09, 1992
+'   Better error checking on barcoded crates / padded any crate number to
+'     5 digits leading zeros
+'   Allowed spaces to overwrite existing data
+'   Test type "PORUS" is no longer a required field (Lima Request)
+'
+'   Version 3.0
+'   Feb 12, 1993
+'   added missing code for superior reactiformers
+'
+'   Version 3.1
+'   MAY 3, 1993
+'   Defaulted "porus" field to "O"
+'   Added barcode identifier to indicate necessity of printing new Bcodes
+'   Expanded Serial Number to 9 digits
+'
+'
+'   Version 3.2
+'   June 21, 1993
+'   Extensive Changes to handle transformer "standard" barcode
+'   ie, Mfg ID is in position 1 not position 3
+'
+'
+'============================================================================
+'   Declare Procedures
+
+DECLARE SUB CursorLeft ()
+DECLARE SUB Toodles ()
+DECLARE SUB CursorRight ()
+DECLARE SUB CursorUp ()
+DECLARE SUB Delete ()
+DECLARE SUB EndKey ()
+'----------------------------------------------------------------------------
+'   Gets a keystroke acceptable according to the information passed in
+'   Accept$.  All alphabetic input is converted to upper case.
+DECLARE FUNCTION Get1Key$ (Accept$)
+DECLARE FUNCTION CheckChars% (Work$)
+DECLARE SUB HomeKey ()
+DECLARE SUB Insert ()
+DECLARE SUB NextField ()
+DECLARE SUB PrevField ()
+DECLARE SUB Readings (Char$)
+DECLARE SUB LOGO ()
+DECLARE SUB DrawBox ()
+DECLARE SUB BadSound ()
+DECLARE SUB BadSound2 ()
+DECLARE SUB BotScrn ()
+DECLARE SUB Mesg1 ()
+
+'----------------------------------------------------------------------------
+'   Checks character for acceptability.  If acceptable, inserts at current
+'   position in current field.  Moves cursor to next location, moving to next
+'   field as needed.
+DECLARE SUB ProcessCharacter (Char$)
+
+'----------------------------------------------------------------------------
+'   Prints string passed in Message$ at screen location Row%, Column%.  Checks
+'   Row% and Column% for valid screen coordinates, and Column% plus Message$
+'   length the see that the string will fit on line Row%.  Exits without
+'   printing string if location invalid.  Leaves cursor on screen line Row%
+DECLARE SUB PutXY (Row%, Column%, Message$)
+DECLARE SUB SaveInformation ()
+DECLARE SUB Scan ()
+'============================================================================
+'   Make variables available to procedures
+'----------------------------------------------------------------------------
+  DIM SHARED Cb%, Column%, DataField%, Delay&, Pointer%, TheCount%, ThePort%
+  DIM SHARED Value$(6), Vlen%(6), Vline%(6), Ooops%, RtoL%, NeedaPrint%, Skippy
+
+'============================================================================
+'   Check the command line.  If it's a V, print the version number and exit.
+'----------------------------------------------------------------------------
+    Parameter$ = UCASE$(LTRIM$(RTRIM$(COMMAND$)))
+   
+    NeedaPrint% = 1
+
+    FileName$ = "shipping.asc"
+ 
+    ThePort% = 2                 ' Default to Comm 2 for DAP handhelds!
+    Delay& = 2                   '   Set time delay
+        
+    IF Parameter$ = "1" THEN
+        ThePort% = 1   ' Set to Comm Port 1
+    END IF
+     
+    Cb% = FREEFILE
+   
+    IF ThePort% = 1 THEN
+        OPEN "COM1:9600,E,7,1,CS,DS" FOR RANDOM AS #Cb%
+    ELSE
+        OPEN "COM2:9600,E,7,1,CS,DS" FOR RANDOM AS #Cb%
+    END IF
+
+'   All data fields will start in column 11
+    Column% = 11
+
+    Vlen%(0) = 5                    ' Crate Number
+    Vline%(0) = 2
+   
+    Vlen%(1) = 5                    ' Device Code
+    Vline%(1) = 3
+   
+    Vlen%(2) = 9                    ' Serial Number
+    Vline%(2) = 4
+   
+    Vlen%(3) = 2                    ' Mfr
+    Vline%(3) = 5
+   
+    Vlen%(4) = 1                    ' Test Description
+    Vline%(4) = 6
+
+    Vlen%(5) = 5                    ' READING
+    Vline%(5) = 7
+
+    Vlen%(6) = 7                    ' METER TYPE
+    Vline%(6) = 8
+
+
+'   Init Entry Fields
+
+    FOR Counter% = 0 TO 6
+        Value$(Counter%) = SPACE$(Vlen%(Counter%))
+    NEXT
+
+    COLOR 7, 0
+    CLS
+
+    Value$(4) = "O"
+LOGO
+
+'Frame the screen
+    DrawBox
+
+Ooops% = 1          ' This flag will be reset only if good data is written
+                    ' to the disk.
+
+ON ERROR GOTO LoopLabel
+
+LoopLabel:
+
+    COLOR 7, 0
+    PutXY 2, 5, "Crate:"
+    PutXY 3, 6, "Code:"
+    PutXY 4, 4, "Serial:"
+    PutXY 5, 7, "Mfr:"
+    PutXY 6, 2, "TestType:"
+    PutXY 7, 3, "Reading:"
+    PutXY 8, 2, "MTR Type:"
+    PutXY 9, 2, " Meter Reads from"
+    PutXY 6, 12, "-Default"
+    IF RtoL% = 1 THEN
+        PutXY 10, 2, "  Right to Left!"
+    ELSE
+        PutXY 10, 2, "  Left to Right!"
+    END IF
+
+    BotScrn
+
+    COLOR 0, 7
+    FOR Counter% = 0 TO 6
+        PutXY Vline%(Counter%), Column%, Value$(Counter%)
+    NEXT
+ 
+    LOCATE Vline%(0), Column%, 1
+    ExitFlag% = 0
+    DataField% = 0
+    Pointer% = 1
+
+'   This is the loop that does the work.
+Label2:
+
+    DO
+        COLOR 0, 7
+        DO
+            IF LOC(Cb%) > 0 THEN
+                Scan
+            END IF
+            Char$ = INKEY$
+        LOOP WHILE Char$ = ""
+        IF LEN(Char$) = 2 THEN          ' Extended function key
+            Char% = ASC(RIGHT$(Char$, 1))
+            LOCATE , , 0                ' Turn the cursor off
+            SELECT CASE Char%
+                CASE 15                 ' Shift/tab
+                    PrevField
+                CASE 59
+                    SaveInformation     ' Append to file
+                CASE 71                 ' Home
+                    HomeKey
+                CASE 72                 ' Cursor up
+                    CursorUp
+                CASE 77                 ' Cursor right
+                    CursorRight
+                CASE 79                 ' End
+                    EndKey
+                CASE 80                 ' Cursor down
+                    NextField
+                CASE 82                 ' Insert a space
+                    Insert
+                CASE 83                 ' Delete a character
+                    Delete
+            END SELECT
+            LOCATE , , 1                ' Turn the cursor on
+        ELSE
+           
+            SELECT CASE Char$
+                CASE CHR$(27)           ' Escape key.  Exit.
+                    GOTO Bye
+                CASE CHR$(9), CHR$(13)
+                    NextField
+                CASE CHR$(8)            ' Cursor left
+                    CursorLeft
+                CASE ELSE
+                    IF DataField% = 5 THEN
+                       Readings Char$
+                    ELSE
+                    ProcessCharacter Char$  'Check for validity, put in array if OK.
+                    END IF
+            END SELECT
+
+        END IF
+    LOOP WHILE ExitFlag% = 0
+    SELECT CASE ExitFlag%
+        CASE 1
+            GOTO LoopLabel
+        CASE 2
+            GOTO Label2
+    END SELECT
+    
+    COLOR 7, 0
+
+Bye:
+CLS
+CLOSE
+
+IF Ooops% = 0 THEN              ' An error check when program is started and
+                                ' Exited without actually writing anything
+
+    OPEN "shipping.asc" FOR BINARY AS 1       ' this little tidbit of code
+    var$ = CHR$(26)                           ' puts an EOF marker at the end
+    SEEK 1, LOF(1)                            ' of SHIPPING.ASC
+    PUT 1, , var$
+
+END IF
+
+CLOSE
+CLS
+DrawBox
+
+    LOCATE 3, 2: PRINT " You have Written"
+    LOCATE 5, 3: PRINT " "; TheCount%; " Record(s)"
+    LOCATE 7, 3: PRINT "  To the Disk"
+    LOCATE 9, 3: PRINT "Press any key"
+    LOCATE 10, 3: PRINT "to continue..."
+    FOR g = 1 TO 29
+    SOUND 50 * g, .2
+    NEXT
+
+Toodles
+    LOCATE 14, 18
+    WHILE rwo$ = ""
+       rwo$ = INKEY$
+    WEND
+    COLOR 7, 0: CLS
+    END
+'****************************************************************************
+'   End of ShipEdit main module
+'****************************************************************************
+
+SUB BadSound
+   FOR h = 10 TO 140
+        SOUND (180 - h) * 10, .1
+   NEXT
+END SUB
+
+SUB BadSound2
+
+FOR y = 1 TO 16
+
+SOUND 530, 1
+SOUND 230, 1
+NEXT y
+
+END SUB
+
+'
+' This part just cleans up the bottom  of the Screen
+'
+'
+SUB BotScrn
+    PutXY 12, 2, "                  "
+    PutXY 13, 2, "                  "
+    PutXY 14, 2, "   F1 - Write    "
+    PutXY 15, 2, "    Esc - Exit    "
+    COLOR 0, 7
+
+END SUB
+
+'****************************************************************************
+'   Check strings for numbers/letters only.  Return 0 if all is well, 1 if not.
+'============================================================================
+FUNCTION CheckChars% (Work$)
+'----------------------------------------------------------------------------
+    Flag% = 0
+    FOR Count% = 1 TO LEN(Work$)
+        C$ = MID$(Work$, Count%, 1)
+        IF INSTR("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" + CHR$(10) + CHR$(13), C$) = 0 THEN
+            Flag% = 1
+        END IF
+    NEXT
+    CheckChars% = Flag%
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Moves cursor one position left.  Moves to previous field if necessary.
+'============================================================================
+SUB CursorLeft
+'----------------------------------------------------------------------------
+  
+'   Decrement the pointer.
+
+    Pointer% = Pointer% - 1
+  
+'   Move to previous field, if necessary.
+
+    IF Pointer% = 0 THEN
+        DataField% = DataField% - 1
+      
+'   If we started in the first field, move to the last one.
+
+        IF DataField% < 0 THEN
+            DataField% = 6
+        END IF
+        Pointer% = Vlen%(DataField%)
+    END IF
+  
+'   Locate the cursor
+
+    LOCATE Vline%(DataField%), Column% + Pointer% - 1
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Moves cursor one postion right.  Moves to next field if necessary.
+'============================================================================
+SUB CursorRight
+'----------------------------------------------------------------------------
+    Pointer% = Pointer% + 1
+    IF Pointer% > Vlen%(DataField%) THEN
+        DataField% = DataField% + 1
+        IF DataField% > 6 THEN
+            DataField% = 0
+        END IF
+        Pointer% = 1
+    END IF
+    LOCATE Vline%(DataField%), Column% + Pointer% - 1
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Moves cursor one position up.  Moves to bottom of other column if
+'   starting from top of column.
+'============================================================================
+SUB CursorUp
+'----------------------------------------------------------------------------
+    DataField% = DataField% - 1
+    Pointer% = 1
+    IF DataField% < 0 THEN
+        DataField% = 6
+    END IF
+
+'   If we're past the end of the field, go to the end of the field.
+
+'    IF Pointer% > Vlen%(DataField%) THEN
+ '       Pointer% = Vlen%(DataField%)
+  '  END IF
+        
+        IF DataField% = 5 THEN
+            LOCATE Vline%(DataField%), Column% + Vlen%(5) - 1
+        ELSE
+        LOCATE Vline%(DataField%), Column% + Pointer% - 1
+        END IF
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Delete a character
+'============================================================================
+SUB Delete
+'----------------------------------------------------------------------------
+    IF Pointer% < Vlen%(DataField%) THEN
+        FOR Junk% = Pointer% TO Vlen%(DataField%) - 1
+            MID$(Value$(DataField%), Junk%, 1) = MID$(Value$(DataField%), Junk% + 1, 1)
+        NEXT
+    END IF
+    MID$(Value$(DataField%), Vlen%(DataField%), 1) = " "
+    LOCATE Vline%(DataField%), Column%, 0
+    PRINT Value$(DataField%);
+    LOCATE Vline%(DataField%), Column% + Pointer% - 1
+'****************************************************************************
+END SUB
+
+SUB DrawBox
+ 
+'
+'  This will draw a box for the DAP 9000 screen
+'
+
+   
+    FOR C% = 1 TO 16
+        SELECT CASE C%
+            CASE 1
+                PutXY C%, 1, "ÉÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»"
+            CASE 11
+                PutXY C%, 1, "ÇÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶"
+            CASE 16
+                PutXY C%, 1, "ÈÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼"
+            CASE ELSE
+                PutXY C%, 1, "º                  º"
+        END SELECT
+    NEXT
+
+  IF ThePort% = 1 THEN
+    PutXY 16, 2, " Scanner On Com1 "
+  ELSE
+    PutXY 16, 2, " Scanner On Com2 "
+  END IF
+ 
+END SUB
+
+'****************************************************************************
+'   Moves last entry - crate field.
+'============================================================================
+SUB EndKey
+'----------------------------------------------------------------------------
+    DataField% = 6
+    Pointer% = 1
+    LOCATE Vline%(DataField%), Column%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Gets a keystroke acceptable according
+'   to the information passed in Accept$.
+'============================================================================
+FUNCTION Get1Key$ (Accept$)
+'----------------------------------------------------------------------------
+
+'   Get an acceptable character.  Convert input to upper case.
+
+    DO
+        x$ = UCASE$(INPUT$(1))
+    LOOP WHILE INSTR(Accept$, x$) = 0
+
+    Get1Key$ = x$
+'****************************************************************************
+END FUNCTION
+
+'****************************************************************************
+'   Moves to first entry crate field.
+'============================================================================
+SUB HomeKey
+'----------------------------------------------------------------------------
+    DataField% = 0
+    Pointer% = 1
+    LOCATE Vline%(DataField%), Column%
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Insert a space.  Last character in field is lost.
+'============================================================================
+SUB Insert
+'----------------------------------------------------------------------------
+    IF Pointer% < Vlen%(DataField%) THEN
+        FOR Junk% = Vlen%(DataField%) TO Pointer% + 1 STEP -1
+            MID$(Value$(DataField%), Junk%, 1) = MID$(Value$(DataField%), Junk% - 1, 1)
+        NEXT
+    END IF
+    MID$(Value$(DataField%), Pointer%, 1) = " "
+    LOCATE Vline%(DataField%), Column%, 0
+    PRINT Value$(DataField%);
+    LOCATE Vline%(DataField%), Column% + Pointer% - 1
+'****************************************************************************
+END SUB
+
+SUB LOGO
+
+    PRINT "   Version 3.2"
+    PRINT "Written 6/21/1993"
+    PRINT
+    PRINT "Would you Like"
+    PRINT "to Enter Meter"
+    PRINT "Readings From"
+    PRINT
+    PRINT "Right to Left  (R)"
+
+    FOR NBB = 1 TO 5
+    NBR$ = RTRIM$(LTRIM$(STR$(NBB)))
+    RR$ = NBR$ + RR$
+   
+    LOCATE 9, 12 - NBB: PRINT RR$
+    FOR GHH = 1 TO 50: NEXT GHH
+    SOUND 200 * NBB, .1
+    NEXT
+   
+    x& = TIMER + 1
+    WHILE x& > TIMER
+    WEND
+   
+    RR$ = ""
+    PRINT "       or"
+    PRINT
+    PRINT "Left to Right? (L)"
+   
+    FOR NBB = 1 TO 5
+    NBR$ = RTRIM$(LTRIM$(STR$(NBB)))
+    RR$ = RR$ + NBR$
+    
+    LOCATE 13, 7: PRINT RR$
+    FOR GHH = 1 TO 50: NEXT GHH
+    SOUND 200 * NBB, .2
+
+    NEXT NBB
+     
+
+    LOCATE 12, 14
+ 
+Direction:
+
+WHILE RtoL$ = ""
+RtoL$ = UCASE$(INKEY$)
+WEND
+
+IF RtoL$ = "R" THEN RtoL% = 1
+
+IF RtoL$ = "L" THEN RtoL% = 0
+
+IF RtoL$ <> "R" AND RtoL$ <> "L" THEN
+   BEEP
+   RtoL$ = ""
+   GOTO Direction
+END IF
+
+END SUB
+
+SUB Mesg1
+                NeedaPrint% = 1
+               
+                IF Skippy = 0 THEN    ' This is not a transfrmr
+               
+                LOCATE 12, 2: PRINT "UNKNOWN MFG CODE"
+                LOCATE 13, 2: PRINT "PLEASE CALL GSL!"
+                LOCATE 14, 2: PRINT "This Error Should"
+                LOCATE 15, 2: PRINT "Not Have Happened"
+               
+                WHILE nkey$ = ""      'Wait for message Acknowledgement!
+                   nkey$ = INKEY$
+                WEND
+               
+                END IF
+               
+END SUB
+
+'****************************************************************************
+'   Moves to next field
+'============================================================================
+SUB NextField
+'----------------------------------------------------------------------------
+    DataField% = DataField% + 1
+    IF DataField% > 6 THEN
+        DataField% = 0
+    END IF
+    Pointer% = 1
+        IF DataField% = 5 THEN
+        LOCATE Vline%(DataField%), Column% + Vlen%(5) - 1
+        ELSE
+        LOCATE Vline%(DataField%), Column%
+        END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Moves to previous field
+'============================================================================
+SUB PrevField
+'----------------------------------------------------------------------------
+    DataField% = DataField% - 1
+    IF DataField% < 0 THEN
+        DataField% = 6
+    END IF
+    Pointer% = 1
+        IF DataField% = 5 THEN
+        LOCATE Vline%(DataField%), Column% + Vlen%(5) - 1
+        ELSE
+        LOCATE Vline%(DataField%), Column%
+        END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Checks character for acceptability.  If acceptable, inserts at current
+'   position in current field.  Moves cursor to next location, moving to next
+'   field as needed.  Environment variable OLDSYS needs to be set to yes to
+'   disallow alphabetic input.
+'============================================================================
+SUB ProcessCharacter (Char$)
+'----------------------------------------------------------------------------
+    Acceptable$ = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ" + CHR$(32)
+    
+    Char$ = UCASE$(Char$)
+    IF INSTR(Acceptable$, Char$) = 0 THEN
+        EXIT SUB
+    END IF
+   
+    MID$(Value$(DataField%), Pointer%, 1) = UCASE$(Char$)
+    PRINT Char$;
+    Pointer% = Pointer% + 1
+    IF Pointer% > Vlen%(DataField%) THEN
+       
+        Pointer% = 1
+        DataField% = DataField% + 1
+       
+        IF DataField% > 6 THEN
+            DataField% = 0
+        END IF
+       
+        IF DataField% = 5 AND RtoL% = 1 THEN
+        LOCATE Vline%(DataField%), Column% + Vlen%(5) - 1
+        ELSE
+        LOCATE Vline%(DataField%), Column%
+        END IF
+
+    END IF
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Prints string passed in Message$ at screen location Row%, Column%.  Checks
+'   Row% and Column% for valid screen coordinates, and Column% plus Message$
+'   length the see that the string will fit on line Row%.  Exits without
+'   printing string if location invalid.  Leaves cursor on screen line Row%
+'============================================================================
+SUB PutXY (Row%, Column%, Message$)
+'----------------------------------------------------------------------------
+    IF Row% < 1 OR Row% > 16 OR Column% < 1 OR Column% > 20 THEN
+        EXIT SUB
+    END IF
+    IF Column% + LEN(Message$) > 21 THEN
+        EXIT SUB
+    END IF
+    LOCATE Row%, Column%
+    PRINT Message$;
+'****************************************************************************
+END SUB
+
+SUB Readings (Char$)
+'****************************************************************************
+'   Checks character for acceptability.  If acceptable, inserts at current
+'   position in current field.  Moves cursor to next location, moving to next
+'   field as needed.
+'============================================================================
+Acceptable$ = "0123456789"
+
+    IF INSTR(Acceptable$, Char$) = 0 THEN
+        BEEP
+        EXIT SUB
+    END IF
+   
+IF RtoL% = 1 THEN
+
+    LOCATE Vline%(5), Column% + Vlen%(5) - Pointer%, 1
+    MID$(Value$(DataField%), Vlen%(5) - Pointer% + 1, 1) = Char$
+    PRINT Char$
+    LOCATE Vline%(5), Column% + Vlen%(5) - Pointer% - 1
+    Pointer% = Pointer% + 1
+  
+ELSE
+   
+    LOCATE Vline%(5), Column% + Pointer% - 1, 1
+    MID$(Value$(DataField%), Pointer%, 1) = UCASE$(Char$)
+    PRINT Char$;
+    Pointer% = Pointer% + 1
+   
+END IF
+
+    IF Pointer% > Vlen%(5) THEN
+        Pointer% = 1
+        DataField% = DataField% + 1
+        LOCATE Vline%(DataField%), Column%
+    END IF
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Formats and saves information for entry into Enable Database.
+'============================================================================
+SUB SaveInformation
+
+
+'Do not allow write with blank fields
+
+CrateBlank:
+    IF Value$(0) = SPACE$(Vlen%(0)) THEN   ' The Crate # is blank!
+        BadSound
+        DataField% = 0
+        Pointer% = 1
+         COLOR 7, 0
+      
+         PutXY 12, 3, " What is the    "
+         PutXY 13, 6, "Crate number?"
+         PutXY 14, 2, " F1 to Save    "
+         LOCATE Vline%(0), Column%
+         ExitFlag% = 1
+         EXIT SUB
+      END IF
+
+Padit:
+
+IF LEN(LTRIM$(RTRIM$(Value$(0)))) < 5 THEN
+
+Value$(0) = "0" + LTRIM$(RTRIM$(Value$(0)))
+GOTO Padit
+
+END IF
+
+LOCATE 2, 11
+PRINT Value$(0)
+
+MtrCodeBlank:
+   
+    IF LEN(Value$(1)) < Vlen%(1) THEN GOTO Jump
+
+    IF INSTR(Value$(1), " ") THEN    ' The meter code is wrong!
+Jump:
+        BadSound
+        DataField% = 1
+        Pointer% = 1
+         COLOR 7, 0
+         PutXY 12, 3, " What is the    "
+         PutXY 13, 6, " meter code?  "
+         PutXY 14, 2, " F1 to Save   "
+         LOCATE Vline%(1), Column%
+         ExitFlag% = 1
+         EXIT SUB
+      END IF
+
+SNBlank:
+    IF Value$(2) = SPACE$(Vlen%(2)) THEN   ' The serial # is blank!
+        BadSound
+        DataField% = 2
+        Pointer% = 1
+         COLOR 7, 0
+      
+         PutXY 12, 3, " What is the    "
+         PutXY 13, 6, "Serial number?"
+         PutXY 14, 2, " F1 to Save   "
+         LOCATE Vline%(2), Column%
+         ExitFlag% = 1
+         EXIT SUB
+      END IF
+
+SNPadit:
+
+IF LEN(LTRIM$(RTRIM$(Value$(2)))) < 9 THEN
+
+Value$(2) = "0" + LTRIM$(RTRIM$(Value$(2)))
+GOTO SNPadit
+
+END IF
+LOCATE Vline%(2), Column%
+PRINT Value$(2)
+
+
+' Do not allow write without valid manufacturer code
+
+BadMfgCode:
+  
+    IF Value$(3) = SPACE$(Vlen%(3)) THEN   ' the mfg field is blank!
+        BadSound
+        DataField% = 3
+        Pointer% = 1
+         COLOR 7, 0
+    
+         PutXY 12, 3, " What is the    "
+         PutXY 13, 6, "MFG Code?     "
+         PutXY 14, 2, " F1 to Save   "
+         LOCATE Vline%(3), Column%
+         ExitFlag% = 1
+         EXIT SUB
+    END IF
+
+
+'------------------------------------------------------------------------
+'   All appears well.  Write it and get ready for the next entry
+
+ExitFlag% = 0
+Output$ = ""
+
+ FOR Count% = 0 TO 6
+   IF Count% < 5 THEN
+     Value$(Count%) = RIGHT$(STRING$(Vlen%(Count%), "0") + LTRIM$(RTRIM$(Value$(Count%))), Vlen%(Count%))
+   END IF
+   Output$ = Output$ + Value$(Count%)
+  
+ NEXT
+
+' now append one character to indicate whether a new barcode should be printed
+
+    IF NeedaPrint% = 1 THEN
+        Output$ = Output$ + "1"
+    ELSE
+        Output$ = Output$ + "0"
+    END IF
+
+    NeedaPrint% = 1   ' reset this flag
+
+   
+
+'   Get a file buffer, open the file, append this data, close the file
+
+    FileBuffer% = FREEFILE
+    OPEN "shipping.asc" FOR APPEND AS #FileBuffer%
+    PRINT #FileBuffer%, Output$
+    CLOSE #FileBuffer%
+  
+'   Clear serial number
+    COLOR 0, 7
+    
+    FOR D% = 1 TO 6
+      Value$(D%) = SPACE$(Vlen%(D%))
+     
+      Value$(4) = "O"      ' Put in a default for test type
+
+      PutXY Vline%(D%), Column%, Value$(D%)
+    NEXT
+    COLOR 7, 0
+
+    DataField% = 1      ' Put the pointer to Barcode and First Digit
+    Pointer% = 1        ' for the next record
+   
+    SOUND 2000, 10
+    SOUND 3400, 2
+    BotScrn
+    LOCATE Vline%(1), Column%
+    TheCount% = TheCount% + 1
+
+'   Now reset the Need for a new bcode print to "yes" as a default
+
+    NeedaPrint% = 1
+
+
+Ooops% = 0
+
+
+'****************************************************************************
+END SUB
+
+'****************************************************************************
+'   Scan barcodes.
+'============================================================================
+SUB Scan
+'----------------------------------------------------------------------------
+
+TheLoop:
+   
+'   Wait a bit.
+    SOUND 3000, 1
+    SOUND 3400, 1
+   
+    COLOR 7, 0
+    PutXY 12, 2, " Receiving Data  "
+    PutXY 13, 2, "                 "
+    PutXY 14, 2, "                 "
+    x& = TIMER + Delay&
+   
+    WHILE x& > TIMER
+    WEND
+
+    NeedaPrint% = 0    '  Zero this flag to indicate that data came in via
+                       '  The barcode reader, rather than via manual entry
+                       '  ie, if it was scanned in, please do not print a
+                       '  new barcode at the lab
+                      
+    Work$ = LTRIM$(INPUT$(LOC(Cb%), #Cb%))
+
+'Make transformer barcodes the right length and catch
+'recorders "96210" etc, which lead off with "00"
+   
+    IF LEFT$(Work$, 1) = "0" THEN
+        IF MID$(Work$, 2, 1) <> "0" THEN
+            Work$ = LTRIM$(RTRIM$("0" + Work$))
+        END IF
+    END IF
+
+'Now verify that there are no garbage symbols in the scan string
+
+    IF CheckChars%(Work$) = 1 THEN
+        Work$ = SPACE$(15)
+    END IF
+
+'If it's more than 17 characters (actually 19), truncate after 17th character.
+    
+    IF LEN(Work$) = 19 THEN
+        Work$ = LEFT$(Work$, 17)
+
+' This handles GE 15 (17) digit barcodes/correct code from "006" to "00006"
+  
+    ELSEIF LEN(Work$) = 17 THEN
+        Work$ = LEFT$(Work$, 14) + "00" + RIGHT$(Work$, 3)
+
+'If there's less than 17 characters, this is a bad read.  Reject.
+
+    ELSEIF LEN(Work$) < 17 THEN
+    SCREEN , , 0
+        LOCATE 12, 2: PRINT " Not An AEP    "
+        LOCATE 13, 2: PRINT " BarCode !! "
+        BadSound2               ' honk if you hate bad reads!
+        GOTO ExitScan
+
+    END IF
+
+'   If it's a crate, update the crate information, and field.  If it's a
+'   meter, put the meter information in the proper fields.  Exit in either
+'   case.
+
+    IF LEFT$(Work$, 9) = "OPCOCRATE" THEN
+        Crate$ = MID$(Work$, 13, 5)
+
+        NeedaPrint% = 1       ' Since the scan was a Crate,
+                              ' we do need to print a new bcode for the meter
+
+        WHILE LEFT$(Crate$, 1) = "0" AND LEN(Crate$) > 1
+            Crate$ = MID$(Crate$, 2)
+        WEND
+
+        Value$(0) = RIGHT$(SPACE$(Vlen%(0)) + Crate$, Vlen%(0))
+        PutXY Vline%(0), Column%, Value$(0)
+        DataField% = 1
+        Pointer% = 1
+
+    ELSE
+        Serial$ = MID$(Work$, 4, 9)
+        WHILE LEFT$(Serial$, 1) = "0" AND LEN(Serial$) > 1
+            Serial$ = MID$(Serial$, 2)
+        WEND
+        DataField% = 4
+        Pointer% = 1
+        Value$(1) = MID$(Work$, 13, 5)
+        Value$(2) = RIGHT$(SPACE$(Vlen%(2)) + Serial$, Vlen%(2))
+'     
+'
+'
+Skippy = 0
+
+IF MID$(Work$, 13, 1) = "V" THEN Skippy = 1     ' test if this code is a
+IF MID$(Work$, 13, 1) = "C" THEN Skippy = 1     ' Transformer
+IF MID$(Work$, 13, 1) = "M" THEN Skippy = 1
+IF MID$(Work$, 13, 1) = "P" THEN Skippy = 1
+
+    IF Skippy = 1 THEN      ' Do this only for transformers
+
+        SELECT CASE MID$(Work$, 1, 1)
+            CASE "A"
+                Value$(3) = "01"
+            CASE "C"
+                Value$(3) = "03"
+            CASE "D"
+                Value$(3) = "04"
+            CASE "E"
+                Value$(3) = "05"
+            CASE "F"
+                Value$(3) = "06"
+            CASE "G"
+                Value$(3) = "07"
+            CASE "H"
+                Value$(3) = "08"
+            CASE "I"
+                Value$(3) = "09"
+            CASE "J"
+                Value$(3) = "10"
+            CASE "K"
+                Value$(3) = "11"
+            CASE "L"
+                Value$(3) = "12"
+            CASE "M"
+                Value$(3) = "13"
+            CASE "N"
+                Value$(3) = "14"
+            CASE "O"
+                Value$(3) = "15"
+            CASE "P"
+                Value$(3) = "16"
+            CASE "Q"
+                Value$(3) = "17"
+            CASE "R"
+                Value$(3) = "18"
+            CASE "S"
+                Value$(3) = "19"
+            CASE "T"
+                Value$(3) = "20"
+            CASE "U"
+                Value$(3) = "21"
+            CASE "V"
+                Value$(3) = "22"
+            CASE "W"
+                Value$(3) = "23"
+            CASE "X"
+                Value$(3) = "24"
+            CASE "Y"
+                Value$(3) = "25"
+            CASE "Z"
+                Value$(3) = "26"
+            CASE "1"
+                Value$(3) = "28"
+            CASE "2"
+                Value$(3) = "29"
+          
+            CASE ELSE
+             
+                Mesg1
+                Value$(3) = "00"
+
+        END SELECT
+
+    END IF
+   
+'
+'
+IF Skippy = 1 GOTO Skippit
+  
+        SELECT CASE MID$(Work$, 3, 1)
+            CASE "A"
+                Value$(3) = "01"
+            CASE "C"
+                Value$(3) = "03"
+            CASE "D"
+                Value$(3) = "04"
+            CASE "E"
+                Value$(3) = "05"
+            CASE "F"
+                Value$(3) = "06"
+            CASE "G"
+                Value$(3) = "07"
+            CASE "H"
+                Value$(3) = "08"
+            CASE "I"
+                Value$(3) = "09"
+            CASE "J"
+                Value$(3) = "10"
+            CASE "K"
+                Value$(3) = "11"
+            CASE "L"
+                Value$(3) = "12"
+            CASE "M"
+                Value$(3) = "13"
+            CASE "N"
+                Value$(3) = "14"
+            CASE "O"
+                Value$(3) = "15"
+            CASE "P"
+                Value$(3) = "16"
+            CASE "Q"
+                Value$(3) = "17"
+            CASE "R"
+                Value$(3) = "18"
+            CASE "S"
+                Value$(3) = "19"
+            CASE "T"
+                Value$(3) = "20"
+            CASE "U"
+                Value$(3) = "21"
+            CASE "V"
+                Value$(3) = "22"
+            CASE "W"
+                Value$(3) = "23"
+            CASE "X"
+                Value$(3) = "24"
+            CASE "Y"
+                Value$(3) = "25"
+            CASE "Z"
+                Value$(3) = "26"
+            CASE "1"
+                Value$(3) = "28"
+            CASE "2"
+                Value$(3) = "29"
+           
+            CASE ELSE
+              
+                Mesg1
+                Value$(3) = "00"
+
+        END SELECT
+       
+Skippit:
+       
+        Skippy = 0
+       
+        FOR Junk% = 1 TO 3
+            PutXY Vline%(Element% + Junk%), Column%, Value$(Element% + Junk%)
+        NEXT
+
+    END IF
+
+ExitScan:
+    BotScrn
+    LOCATE Vline%(DataField%), Column% + Pointer% - 1, 1
+
+END SUB
+
+SUB Toodles
+'
+'  We will put a new message here each month
+'
+
+Mesg = VAL(MID$(DATE$, 1, 2))
+LOCATE 12, 3
+
+SELECT CASE Mesg
+
+    CASE 1
+           PRINT " Only 3 Months"
+           LOCATE 13, 3: PRINT " Till Spring!"
+
+    CASE 2
+           PRINT "Cheer up, it's"
+           LOCATE 13, 3: PRINT " a short month!"
+    CASE 3
+           PRINT "  Burma Shave"
+
+    CASE 4
+           PRINT "April Showers "
+           LOCATE 13, 3: PRINT " Bring May"
+           LOCATE 14, 3: PRINT "  Flowers.. "
+          
+    CASE 5
+           LOCATE 13, 4: PRINT "Go Indians!"
+
+    CASE 6
+           PRINT "The Heat Pump "
+           LOCATE 13, 2: PRINT "It Heats, It Cools"
+           LOCATE 14, 3: PRINT " and it Saves!"
+   
+    CASE 7
+           PRINT "Think Safety!"
+
+    CASE 8
+           PRINT "Watch Out for"
+           LOCATE 13, 3: PRINT " School Buses"
+
+    CASE 9
+           LOCATE 13, 2: PRINT "Go Browns!"
+
+    CASE 10
+           PRINT "Goodbye Summer"
+
+    CASE 11
+           PRINT "Happy"
+           LOCATE 13, 3: PRINT "Thanksgiving "
+
+    CASE 12
+           PRINT "Merry Christmas!"
+
+END SELECT
+
+END SUB
+

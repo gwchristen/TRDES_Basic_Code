@@ -1,0 +1,509 @@
+'* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+'*                                                                         *
+'*                             DIRTEST.BAS                                 *
+'*                                                                         *
+'*                        A Disk Directory Demo                            *
+'*               written with Microsoft QuickBASIC v4.00b                  *
+'*                                                                         *
+'* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+'*                                                                         *
+'*  NOTE:                                                                  *
+'*                                                                         *
+'*  THIS  PROGRAM,  ITS USE,  OPERATION,  AND SUPPORT IS PROVIDED "AS IS"  *
+'*  WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING,  *
+'*  BUT NOT LIMITED TO,  THE IMPLIED  WARRANTIES  OF  MERCHANTABILITY AND  *
+'*  FITNESS FOR A PARTICULAR PURPOSE.   THE ENTIRE RISK AS TO THE QUALITY  *
+'*  AND PERFORMANCE OF THIS PROGRAM IS WITH THE USER.   IN NO EVENT SHALL  *
+'*  MICROSOFT BE LIABLE FOR  DAMAGES INCLUDING,  WITHOUT LIMITATION,  ANY  *
+'*  LOST PROFITS,  LOST  SAVINGS,  OR OTHER  INCIDENTAL OR  CONSEQUENTIAL  *
+'*  DAMAGES ARISING FROM  THE USE OR INABILITY TO USE THIS PROGRAM,  EVEN  *
+'*  IF MICROSOFT HAS BEEN ADVISED OF THE  POSSIBILTY OF SUCH DAMAGES,  OR  *
+'*  FOR ANY CLAIM BY ANY OTHER PARTY.                                      *
+'*                                                                         *
+'* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+'
+'QuickBASIC 4.0 Disk Directory routine
+'By Kyle Sparks, Microsoft 1988
+'
+'for use inside the QB4 environment, must have QB.QLB Quick Library loaded
+'
+'
+'This program demonstrates the use of FIND FIRST and FIND NEXT, two DOS
+'interrupts used to get the directory of the disk.  It also shows how to
+'get the free disk space, the default disk drive, and the default path.
+'
+'
+'----------------------------------------------------------------------------
+
+   DEFINT A-Z
+
+'--------------------------- Define Types -----------------------------------
+  
+   TYPE FileFindBuf                   'DTA Buffer
+      DOS            AS STRING * 19   'first 20 bytes reserved
+      CreateTime     AS STRING * 1    'by DOS
+      Attributes     AS INTEGER       'Attribute of file
+      AccessTime     AS INTEGER       'Last access time of file
+      AccessDate     AS INTEGER       'Last access date of file
+      FileSize       AS LONG          'Size of file in bytes
+      FileName       AS STRING * 13   'File name XXXXXXXX.XXX
+   END TYPE
+
+   TYPE Register                      'Type for CALL Interrupt
+        ax    AS INTEGER
+        bx    AS INTEGER
+        cx    AS INTEGER
+        dx    AS INTEGER
+        bp    AS INTEGER
+        si    AS INTEGER
+        di    AS INTEGER
+        flags AS INTEGER
+        ds    AS INTEGER
+        es    AS INTEGER
+   END TYPE
+
+
+'----------------------------------------------------------------------------
+
+   DECLARE FUNCTION GetDrive$ ()                   'Gets the default drive
+   DECLARE FUNCTION GetPath$ (Drive$)              'Gets the default path
+   DECLARE FUNCTION FirstFM (Path$, FA%)           'Searches for First File Match
+   DECLARE FUNCTION NextFM ()                      'Searches for Next File Match
+   DECLARE FUNCTION ParseCommandLine$ ()
+   DECLARE FUNCTION WDate$ (d%)                    'Converts Date
+   DECLARE FUNCTION WTime$ (t%)                    'Converts Time
+  
+' - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+  
+   DECLARE SUB DIR (Path$, FileNames() AS STRING, FA%)  'Dir Control Module
+   DECLARE SUB InitBuf (BUFFER AS FileFindBuf)          'Initializes buffer
+   DECLARE SUB Interrupt (intnum AS INTEGER, inreg AS Register, outreg AS Register)
+   DECLARE SUB InterruptX (intnum AS INTEGER, inreg AS Register, outreg AS Register)
+   DECLARE SUB SetDTA (BUF AS ANY)                      'Sets the Disk Transfer Area
+
+'-------------------------- Declare Variables -------------------------------
+
+   DIM BUFFER AS FileFindBuf
+   DIM inreg AS Register, outreg AS Register
+   DIM fl(100) AS STRING * 13
+   DIM FileNames(256) AS STRING
+   DIM regs AS Register
+
+' - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+   
+   COMMON SHARED Drive$
+
+'============================================================================
+  
+'BEGIN
+
+'----------------- Filter COMMAND$ and determine search path ----------------
+  
+   Path$ = ParseCommandLine$
+
+'------------------------ Get volume name of disk ---------------------------
+
+   CALL DIR(Path$, FileNames(), &H8)
+
+'-------------------------- Display Volume Name -----------------------------
+
+   s = INSTR(LEFT$(FileNames(1), 12), ".")
+  
+   Volume$ = LEFT$(FileNames(1), 8) + MID$(FileNames(1), 10, 3)
+
+   PRINT
+   PRINT
+   PRINT " Volume in drive "; Drive$; ": ";
+
+   IF INSTR(LEFT$(FileNames(1), 12), " ") > 1 THEN
+     
+      PRINT "is "; Volume$
+  
+   ELSE
+     
+      PRINT "has no label"
+  
+   END IF
+
+'----------------------------------------------------------------------------
+
+   PRINT " Directory of "; Path$
+   PRINT
+
+'------------------- Get DIR: search for files and SUBDIRs ------------------
+  
+   FileAttribute% = &H10  '------+            HEX Value  File Attribute
+                          '      |            ---------  --------------
+                          '      |-------------->  1     Read Only
+                          '      |-------------->  2     Hidden
+                          '      |-------------->  4     System
+                          '      |                 8     Volume Label
+                          '      +--------------> 10     Subdirectory
+                          '                       20     Archive
+                          '                       40     Unused
+                          '                       80     Unused
+                          '
+                          ' NOTE: Will search for ALL attributes up to the
+                          '       one specified.  As shown above, searching
+                          '       for a file attribute of ten will search
+                          '       for all attributes up to ten (except for
+                          '       8, this must be specified by itself, and
+                          '       will search for only the volume label).
+
+   CALL DIR(Path$, FileNames(), &H10)
+
+'------------------------ Display Directory of Disk -------------------------
+  
+   Total = 0
+   StopFlag = 0
+  
+   WHILE FileNames(Total + 1) <> "" AND StopFlag < 2   'get total # of files found
+     
+      Total = Total + 1
+     
+      IF INSTR(FileNames(Total), " ") > 1 THEN
+        
+         PRINT FileNames(Total)
+     
+      ELSE
+        
+         Total = Total - 1
+         StopFlag = StopFlag + 1
+     
+      END IF
+  
+   WEND
+
+'------------------------ Display other information -------------------------
+  
+   IF Total > 0 THEN
+     
+      PRINT TAB(7);
+      PRINT USING "###"; Total; :
+      PRINT " File(s)  ";
+  
+     
+'------------------------- Get the free disk space --------------------------
+     
+      regs.ax = &H3600                    'function 36H: get disk allocation info.
+      regs.dx = ASC(Drive$) - 64          'Drive #: 0=default, 1=A:, 2=B:, etc
+    
+      CALL Interrupt(&H21, regs, regs)    'call int 21H
+    
+      BytesAvail& = regs.ax * regs.cx     'AX=Sectors/Custer, CX=Bytes/Sector
+      BytesAvail& = regs.bx * BytesAvail& 'BX=Number of available clusters
+                                          'DX returns the Cluters/Drive, but is
+                                          'is not used in this routine.
+     
+      PRINT BytesAvail&; "bytes free"
+  
+   ELSE
+     
+      PRINT "File Not Found."             'No match found for Path$
+  
+   END IF
+
+'----------------------------------------------------------------------------
+
+END
+
+'============================================================================
+
+SUB DIR (Path$, DirArray() AS STRING, FA%)
+'------------------------------------------------------------------------
+'  procedure DIR manages other procedures and loads an array with the
+'  file names and information for files that match the search string.
+'
+'  Path$ is the search string for the DIR
+'
+'------------------------------------------------------------------------
+
+DIM BUFFER AS FileFindBuf
+
+SetDTA BUFFER
+
+Counter = 0
+IF (FirstFM(Path$, FA%) = 0) THEN
+  DO
+
+    Counter = Counter + 1
+    s = INSTR(BUFFER.FileName, ".")
+    IF s < 2 THEN s = 8
+
+    DirArray(Counter) = SPACE$(43)
+    MID$(DirArray(Counter), 1, 8) = LEFT$(BUFFER.FileName, s - 1)
+    MID$(DirArray(Counter), 10, 3) = RIGHT$(BUFFER.FileName, LEN(BUFFER.FileName) - s)
+    IF BUFFER.Attributes = 4096 THEN
+       MID$(DirArray(Counter), 14, 8) = "<DIR>"
+    ELSE
+       MID$(DirArray(Counter), 14, 8) = SPACE$(8 - LEN(RTRIM$(LTRIM$(STR$(BUFFER.FileSize))))) + RTRIM$(LTRIM$(STR$(BUFFER.FileSize)))
+    END IF
+  
+    MID$(DirArray(Counter), 24, 10) = WDate$(BUFFER.AccessDate)
+    MID$(DirArray(Counter), 34, 6) = WTime$(BUFFER.AccessTime)
+
+    InitBuf BUFFER                 'Clear Buffer
+
+    LOOP WHILE (NextFM = 0) AND Counter < 255
+
+END IF
+
+END SUB
+
+FUNCTION FirstFM (Path$, FA%)                 'Find First Match
+'------------------------------------------------------------------------
+'  function FirstFM returns a zero if the search for first file match
+'  was successful.
+'------------------------------------------------------------------------
+ 
+   DIM inreg AS Register, outreg AS Register
+  
+   inreg.ax = &H4E00
+   inreg.cx = FA%
+   FileName$ = Path$ + CHR$(0)
+   inreg.dx = SADD(FileName$)
+  
+   Interrupt &H21, inreg, outreg              'Find First Match
+  
+   FirstM = (outreg.ax AND &HF)
+
+END FUNCTION
+
+FUNCTION GetDrive$
+'------------------------------------------------------------------------
+'  function GetDrive$ returns the current active DOS drive letter.
+'------------------------------------------------------------------------
+
+   DIM regs AS Register
+  
+   regs.ax = &H1900
+  
+   Interrupt &H21, regs, regs
+  
+   GetDrive$ = CHR$(65 + regs.ax MOD 256)
+
+END FUNCTION
+
+FUNCTION GetPath$ (Drive$)
+'------------------------------------------------------------------------
+'  function GetPath$ returns the current active DOS path on the specified
+'------------------------------------------------------------------------
+
+   DIM regs AS Register, sb AS STRING * 64
+  
+   regs.ax = &H4700
+   regs.dx = ASC(Drive$) - 64
+   regs.ds = VARSEG(sb)
+   regs.si = VARPTR(sb)
+  
+   InterruptX &H21, regs, regs
+  
+   GetPath$ = LEFT$(sb, INSTR(sb, CHR$(0)) - 1)
+
+END FUNCTION
+
+SUB InitBuf (BUFFER AS FileFindBuf) STATIC
+'------------------------------------------------------------------------
+'  procedure InitBuf initializes the DTA buffer.
+'------------------------------------------------------------------------
+
+'    the first 20 bytes are reserved for DOS and are unchanged
+     BUFFER.CreateTime = " "
+     BUFFER.Attributes = 0
+     BUFFER.AccessTime = 0
+     BUFFER.AccessDate = 0
+     BUFFER.FileSize = 0
+     BUFFER.FileName = STRING$(13, 32)
+
+END SUB
+
+FUNCTION NextFM STATIC
+'------------------------------------------------------------------------
+'  function NextFM returns a zero if the search for the next file match
+'  was successful.
+'------------------------------------------------------------------------
+
+   DIM inreg AS Register, outreg AS Register
+  
+   inreg.ax = &H4F00
+   inreg.cx = FA%
+   FileName$ = Path$ + CHR$(0)
+   inreg.dx = SADD(FileName$)
+  
+   Interrupt &H21, inreg, outreg
+  
+   NextFM = outreg.ax AND &HF
+
+END FUNCTION
+
+FUNCTION ParseCommandLine$
+'------------------------------------------------------------------------
+'  procedure ParseCommandLine returns a search string using the command
+'  line arguments passed from DOS.  If no command line arguments were
+'  passed, it builds a path from the default DOS drive and path.
+'------------------------------------------------------------------------
+
+   ParsePath$ = COMMAND$
+   FileSpec$ = "*.*"
+  
+   IF RIGHT$(ParsePath$, 2) = ".." THEN ParsePath$ = ParsePath$ + "\*.*"
+   IF RIGHT$(ParsePath$, 1) = "." AND LEN(ParsePath$) = 1 THEN ParsePath$ = ""
+   IF RIGHT$(ParsePath$, 1) = "." AND (LEFT$(RIGHT$(ParsePath$, 2), 1) = ":" OR LEFT$(RIGHT$(ParsePath$, 2), 1) = "\") THEN ParsePath$ = LEFT$(ParsePath$, LEN(ParsePath$) - 1) + "*.*"
+
+   IF ParsePath$ = "" THEN
+     
+      Drive$ = GetDrive$
+      ParsePath$ = Drive$ + ":\" + GetPath$(Drive$)
+     
+      IF GetPath$(Drive$) = "" THEN FileSpec$ = "*.*"
+     
+   ELSEIF LEN(ParsePath$) = 3 AND INSTR(ParsePath$, ":") = 2 THEN
+     
+      ParsePath$ = ParsePath$
+      Drive$ = LEFT$(ParsePath$, 1)
+  
+   ELSEIF LEN(ParsePath$) = 2 AND RIGHT$(ParsePath$, 1) = ":" THEN
+        
+      Drive$ = LEFT$(ParsePath$, 1)
+      ParsePath$ = Drive$ + ":\" + GetPath$(Drive$)
+              
+      IF GetPath$(Drive$) = "" THEN FileSpec$ = "*.*"
+           
+   ELSE
+        
+      IF INSTR(ParsePath$, ":") <> 2 THEN
+              
+         Drive$ = GetDrive$
+        
+      ELSE
+        
+         Drive$ = LEFT$(ParsePath$, 1)
+         ParsePath$ = RIGHT$(ParsePath$, LEN(ParsePath$) - 2)
+        
+      END IF
+        
+      IF LEFT$(ParsePath$, 1) = "\" THEN
+           
+         ParsePath$ = Drive$ + ":" + ParsePath$
+        
+      ELSE
+
+         IF GetPath$(Drive$) = "" THEN FileSpec$ = "*.*"
+           
+         IF GetPath$(Drive$) = "" THEN
+              
+            ParsePath$ = Drive$ + ":" + GetPath$(Drive$) + "\" + ParsePath$
+           
+         ELSE
+              
+            ParsePath$ = Drive$ + ":\" + GetPath$(Drive$) + "\" + ParsePath$
+           
+         END IF
+        
+      END IF
+        
+      IF INSTR(ParsePath$, ".") > 0 THEN
+           
+         FileSpec$ = ""
+           
+         FOR s = LEN(ParsePath$) TO 1 STEP -1
+              
+            IF MID$(ParsePath$, s, 1) = "\" THEN EXIT FOR ELSE FileSpec$ = MID$(ParsePath$, s, 1) + FileSpec$
+           
+         NEXT s
+           
+         ParsePath$ = LEFT$(ParsePath$, s)
+        
+      END IF
+  
+   END IF
+
+   IF RIGHT$(ParsePath$, 1) <> "\" AND LEFT$(FileSpec$, 1) <> "\" THEN FileSpec$ = "\" + FileSpec$
+  
+   ParseCommandLine$ = ParsePath$ + FileSpec$
+
+END FUNCTION
+
+SUB SetDTA (BUFFER AS FileFindBuf) STATIC
+'------------------------------------------------------------------------
+'  procedure SetDTA sets up the Disk Transfer Area, where the file info
+'  for each file will be stored.
+'------------------------------------------------------------------------
+ 
+   DIM inreg AS Register, outreg AS Register
+  
+   InitBuf BUFFER
+  
+   inreg.ax = &H1A00
+   inreg.ds = VARSEG(BUFFER)
+   inreg.dx = VARPTR(BUFFER)
+  
+   InterruptX &H21, inreg, outreg
+
+END SUB
+
+FUNCTION WDate$ (d%) STATIC
+'------------------------------------------------------------------------
+'  function WDate$ converts the encoded date returned by FindFirst or
+'  FindNext in BUFFER.Date into a date that is understandable.
+'------------------------------------------------------------------------
+
+   DIM dl AS LONG
+ 
+   IF d% >= 0 THEN
+      dl = d%
+   ELSE
+      dl = 65536 + d%
+   END IF
+   mn = (dl \ 2 ^ 5) AND (&HF)
+   IF mn < 10 THEN
+      mn$ = " " + LTRIM$(STR$(mn))
+   ELSE
+      mn$ = LTRIM$(STR$(mn))
+   END IF
+   dy = dl AND (&H1F)
+   IF dy < 10 THEN
+      dy$ = "0" + LTRIM$(STR$(dy))
+   ELSE
+      dy$ = LTRIM$(STR$(dy))
+   END IF
+   yr$ = STR$((dl \ 2 ^ 9) + 80)
+   WDate$ = mn$ + "-" + dy$ + "-" + LTRIM$(yr$)
+ 
+END FUNCTION
+
+FUNCTION WTime$ (d%) STATIC
+'------------------------------------------------------------------------
+'  function WDate$ converts the encoded time returned by FindFirst or
+'  FindNext in BUFFER.Time into a time that is understandable.
+'------------------------------------------------------------------------
+
+   DIM dl AS LONG
+ 
+   IF d% >= 0 THEN
+      dl = d%
+   ELSE
+      dl = 65536 + d%
+   END IF
+   hr = (dl \ 2 ^ 11) AND (&H1F)
+   IF hr >= 12 THEN
+      pf$ = "p"
+      hr = hr - 12
+   ELSE
+      pf$ = "a"
+   END IF
+   IF hr = 0 THEN hr = 12
+   IF hr < 10 THEN
+      hr$ = " " + LTRIM$(STR$(hr))
+   ELSE
+      hr$ = LTRIM$(STR$(hr))
+   END IF
+   mt = ((dl \ 2 ^ 5) AND (&H3F))
+   IF mt < 10 THEN
+      mt$ = "0" + LTRIM$(STR$(mt))
+   ELSE
+      mt$ = LTRIM$(STR$(mt))
+   END IF
+   WTime$ = hr$ + ":" + mt$ + pf$
+END FUNCTION
+
